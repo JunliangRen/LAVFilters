@@ -36,11 +36,62 @@
 
 extern "C"
 {
+#include "libavcodec/dv_profile.h"
 #include "libavutil/pixdesc.h"
 #include "libavutil/mastering_display_metadata.h"
 #include "libavutil/hdr_dynamic_metadata.h"
 #include "libavutil/dovi_meta.h"
 };
+
+struct DVFieldOrderFallback
+{
+    DWORD tag;
+    int height;
+    AVFieldOrder fieldOrder;
+};
+
+static const DWORD DVFieldOrderFallbackTag = MAKEFOURCC('D', 'V', 'F', 'O');
+
+// Only a complete SD DV frame with intact VAUX blocks can prove that its control pack is absent.
+static const AVDVProfile *GetDVProfileWithoutVideoControlPack(const AVPacket *packet)
+{
+    if (!packet->data || packet->size < DV_PROFILE_BYTES)
+        return nullptr;
+
+    const AVDVProfile *profile = av_dv_frame_profile(nullptr, packet->data, packet->size);
+    if (!profile || profile->width != 720 || (profile->height != 480 && profile->height != 576) ||
+        packet->size != profile->frame_size)
+        return nullptr;
+
+    const int sequences = profile->difseg_size * profile->n_difchan;
+    for (int sequence = 0; sequence < sequences; sequence++)
+    {
+        const BYTE *header = packet->data + sequence * 150 * 80;
+        const int sequenceNumber = sequence % profile->difseg_size;
+        const int channel = sequence / profile->difseg_size;
+        if ((header[0] & 0xe0) != 0 || (header[1] >> 4) != sequenceNumber ||
+            ((header[1] >> 3) & 1) != channel || header[2] != 0)
+            return nullptr;
+
+        for (int block = 0; block < 3; block++)
+        {
+            const BYTE *vaux = header + (3 + block) * 80;
+            if ((vaux[0] & 0xe0) != 0x40 || (vaux[1] >> 4) != sequenceNumber ||
+                ((vaux[1] >> 3) & 1) != channel || vaux[2] != block)
+                return nullptr;
+
+            for (int pack = 0; pack < 15; pack++)
+            {
+                // Any source-control pack, including a progressive or conflicting one, blocks the fallback.
+                if (vaux[3 + pack * 5] == 0x61)
+                    return nullptr;
+            }
+        }
+    }
+
+    return profile;
+}
+
 
 ////////////////////////////////////////////////////////////////////////////////
 // Constructor
@@ -345,8 +396,8 @@ STDMETHODIMP CDecAvcodec::InitDecoder(AVCodecID codec, const CMediaType *pmt, co
             biRealWidth = vih2->rcTarget.right;
             biRealHeight = vih2->rcTarget.bottom;
         }
-        // Uncompressed decoders need the container's field order to flag their decoded frames.
-        if ((codec == AV_CODEC_ID_V210 || codec == AV_CODEC_ID_RAWVIDEO) &&
+        // Uncompressed video and DV with missing control packs need the container's field order.
+        if ((codec == AV_CODEC_ID_V210 || codec == AV_CODEC_ID_RAWVIDEO || codec == AV_CODEC_ID_DVVIDEO) &&
             (vih2->dwInterlaceFlags & AMINTERLACE_IsInterlaced))
             m_pAVCtx->field_order = (vih2->dwInterlaceFlags & AMINTERLACE_Field1First) ? AV_FIELD_TT : AV_FIELD_BB;
     }
@@ -358,6 +409,9 @@ STDMETHODIMP CDecAvcodec::InitDecoder(AVCodecID codec, const CMediaType *pmt, co
     m_pAVCtx->bits_per_coded_sample = pBMI->biBitCount;
     m_pAVCtx->err_recognition = 0;
     m_pAVCtx->workaround_bugs = FF_BUG_AUTODETECT;
+
+    if (codec == AV_CODEC_ID_DVVIDEO)
+        m_pAVCtx->flags |= AV_CODEC_FLAG_COPY_OPAQUE;
 
     // Setup threading
     // Thread Count. 0 = auto detect
@@ -1082,6 +1136,25 @@ STDMETHODIMP CDecAvcodec::DecodePacket(AVPacket *avpkt, REFERENCE_TIME rtStartIn
     // packet pre-processing
     if (avpkt)
     {
+        // Carry this packet's result to its own output frame, including through frame threading.
+        if (m_nCodecId == AV_CODEC_ID_DVVIDEO && m_pAVCtx->field_order > AV_FIELD_PROGRESSIVE &&
+            !avpkt->opaque_ref)
+        {
+            const AVDVProfile *profile = GetDVProfileWithoutVideoControlPack(avpkt);
+            if (profile)
+            {
+                avpkt->opaque_ref = av_buffer_alloc(sizeof(DVFieldOrderFallback));
+                if (!avpkt->opaque_ref)
+                    return E_OUTOFMEMORY;
+
+                DVFieldOrderFallback *fallback = (DVFieldOrderFallback *)avpkt->opaque_ref->data;
+                fallback->tag = DVFieldOrderFallbackTag;
+                fallback->height = profile->height;
+                fallback->fieldOrder = m_pAVCtx->field_order;
+            }
+        }
+
+
         // EOS/GOP detection for mpeg2 video streams
         if (m_nCodecId == AV_CODEC_ID_MPEG2VIDEO)
         {
@@ -1255,6 +1328,22 @@ send_packet:
         ///////////////////////////////////////////////////////////////////////////////////////////////
         // All required values collected, deliver the frame
         ///////////////////////////////////////////////////////////////////////////////////////////////
+        // Use the container only for the matching SD DV frame whose control pack was confirmed missing.
+        if (m_nCodecId == AV_CODEC_ID_DVVIDEO && !(m_pFrame->flags & AV_FRAME_FLAG_INTERLACED) &&
+            m_pFrame->opaque_ref && m_pFrame->opaque_ref->size == sizeof(DVFieldOrderFallback))
+        {
+            const DVFieldOrderFallback *fallback = (const DVFieldOrderFallback *)m_pFrame->opaque_ref->data;
+            if (fallback->tag == DVFieldOrderFallbackTag && m_pFrame->width == 720 &&
+                m_pFrame->height == fallback->height && fallback->fieldOrder > AV_FIELD_PROGRESSIVE)
+            {
+                m_pFrame->flags |= AV_FRAME_FLAG_INTERLACED;
+                m_pFrame->flags &= ~AV_FRAME_FLAG_TOP_FIELD_FIRST;
+                if (fallback->fieldOrder == AV_FIELD_TT || fallback->fieldOrder == AV_FIELD_TB)
+                    m_pFrame->flags |= AV_FRAME_FLAG_TOP_FIELD_FIRST;
+            }
+        }
+
+
         LAVFrame *pOutFrame = nullptr;
         AllocateFrame(&pOutFrame);
 
