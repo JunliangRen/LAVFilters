@@ -373,8 +373,9 @@ STDMETHODIMP CLAVFStreamInfo::CreateVideoMediaType(AVFormatContext *avctx, AVStr
         mtype.formattype = FORMAT_VideoInfo2;
     }
 
-    // Uncompressed video carries its field order in the container, so retain it in a VideoInfo2 header.
-    if ((avstream->codecpar->codec_id == AV_CODEC_ID_V210 || avstream->codecpar->codec_id == AV_CODEC_ID_RAWVIDEO) &&
+    // Retain container field order for uncompressed video and DV with missing control packs.
+    if ((avstream->codecpar->codec_id == AV_CODEC_ID_V210 || avstream->codecpar->codec_id == AV_CODEC_ID_RAWVIDEO ||
+         avstream->codecpar->codec_id == AV_CODEC_ID_DVVIDEO) &&
         avstream->codecpar->field_order > AV_FIELD_PROGRESSIVE)
         mtype.formattype = FORMAT_VideoInfo2;
 
