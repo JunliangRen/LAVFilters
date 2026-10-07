@@ -316,6 +316,9 @@ static const FFMPEG_SUBTYPE_MAP lavc_video_codecs[] = {
   { &MEDIASUBTYPE_CYUV, AV_CODEC_ID_CYUV },
   { &MEDIASUBTYPE_AVS1, AV_CODEC_ID_ASV1 },
   { &MEDIASUBTYPE_AVS2, AV_CODEC_ID_ASV2 },
+  { &MEDIASUBTYPE_CAVS, AV_CODEC_ID_CAVS },
+  { &MEDIASUBTYPE_AVS2_VIDEO, AV_CODEC_ID_AVS2 },
+  { &MEDIASUBTYPE_AVS3, AV_CODEC_ID_AVS3 },
   { &MEDIASUBTYPE_AVRn, AV_CODEC_ID_AVRN },
   { &MEDIASUBTYPE_SP5X, AV_CODEC_ID_SP5X },
   { &MEDIASUBTYPE_SP54, AV_CODEC_ID_SP5X },
@@ -642,6 +645,9 @@ const AMOVIESETUP_MEDIATYPE CLAVVideo::sudPinTypesIn[] = {
   { &MEDIATYPE_Video, &MEDIASUBTYPE_CYUV },
   { &MEDIATYPE_Video, &MEDIASUBTYPE_AVS1 },
   { &MEDIATYPE_Video, &MEDIASUBTYPE_AVS2 },
+  { &MEDIATYPE_Video, &MEDIASUBTYPE_CAVS },
+  { &MEDIATYPE_Video, &MEDIASUBTYPE_AVS2_VIDEO },
+  { &MEDIATYPE_Video, &MEDIASUBTYPE_AVS3 },
   { &MEDIATYPE_Video, &MEDIASUBTYPE_AVRn },
   { &MEDIATYPE_Video, &MEDIASUBTYPE_SP5X },
   { &MEDIATYPE_Video, &MEDIASUBTYPE_SP54 },
@@ -775,6 +781,9 @@ static codec_config_t m_codec_config[] = {
   { 1, { AV_CODEC_ID_VP4 }},                                                 // Codec_VP4
   { 1, { AV_CODEC_ID_FIC }},                                                 // Codec_FIC
   { 1, { AV_CODEC_ID_APV }},                                                 // Codec_APV
+  { 1, { AV_CODEC_ID_CAVS }, "cavs", "AVS1 (Chinese AVS)"},                  // Codec_CAVS
+  { 1, { AV_CODEC_ID_AVS2 }, "avs2", "AVS2"},                               // Codec_AVS2
+  { 1, { AV_CODEC_ID_AVS3 }, "avs3", "AVS3"},                               // Codec_AVS3
 };
 // clang-format off
 

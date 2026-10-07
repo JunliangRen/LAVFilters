@@ -62,6 +62,9 @@ static FormatMapping video_map[] = {
   { AV_CODEC_ID_WEBP,       &MEDIASUBTYPE_WEBP,         MKTAG('W','E','B','P'), &FORMAT_VideoInfo2 },
   { AV_CODEC_ID_WEBP_ANIM,  &MEDIASUBTYPE_WEBP_ANIM,    MKTAG('V','P','8','X'), &FORMAT_VideoInfo2 },
   { AV_CODEC_ID_APV,        &MEDIASUBTYPE_APV1,         MKTAG('A','P','V','1'), &FORMAT_VideoInfo2 },
+  { AV_CODEC_ID_CAVS,       &MEDIASUBTYPE_CAVS,         MKTAG('C','A','V','S'), &FORMAT_VideoInfo2 },
+  { AV_CODEC_ID_AVS2,       &MEDIASUBTYPE_AVS2_VIDEO,    MKTAG('A','V','S','2'), &FORMAT_VideoInfo2 },
+  { AV_CODEC_ID_AVS3,       &MEDIASUBTYPE_AVS3,         MKTAG('A','V','S','3'), &FORMAT_VideoInfo2 },
 };
 // clang-format on
 

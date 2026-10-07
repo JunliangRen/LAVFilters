@@ -650,6 +650,7 @@ STDMETHODIMP CLAVSplitter::InitDemuxer()
 
     m_rtStart = m_rtNewStart = m_rtCurrent = 0;
     m_rtStop = m_rtNewStop = m_pDemuxer->GetDuration();
+    m_bStopValid = FALSE;
     m_bPlaybackStarted = FALSE;
 
     const CBaseDemuxer::stream *videoStream = m_pDemuxer->SelectVideoStream();
@@ -828,7 +829,14 @@ DWORD CLAVSplitter::ThreadProc()
         {
             if ((*pinIter)->IsConnected())
             {
-                (*pinIter)->DeliverNewSegment(m_rtStart, m_rtStop, m_dRate);
+                // The demuxer's duration is an estimate. Only an explicit stop
+                // request may trim AVS pictures reordered beyond that estimate.
+                const GUID &subtype = (*pinIter)->GetActiveMediaType().subtype;
+                const bool bAVSVideo = (*pinIter)->IsVideoPin() &&
+                    (subtype == MEDIASUBTYPE_CAVS || subtype == MEDIASUBTYPE_AVS2_VIDEO ||
+                     subtype == MEDIASUBTYPE_AVS3);
+                const REFERENCE_TIME rtSegmentStop = bAVSVideo && !m_bStopValid ? _I64_MAX : m_rtStop;
+                (*pinIter)->DeliverNewSegment(m_rtStart, rtSegmentStop, m_dRate);
                 m_pActivePins.push_back(*pinIter);
             }
         }
@@ -905,10 +913,30 @@ HRESULT CLAVSplitter::DeliverPacket(Packet *pPacket)
     {
         m_rtCurrent = pPacket->rtStop;
 
-        if (m_bStopValid && m_rtStop && pPacket->rtStart > m_rtStop)
+        // AVS reference pictures can have PTS beyond the stop while B
+        // pictures before the stop still follow in decode order. Stop on DTS
+        // of the active video, and let the decoder trim presentation output.
+        bool bAVSVideo = false;
+        if (m_bStopValid && m_rtStop)
+        {
+            for (CLAVOutputPin *pActivePin : m_pActivePins)
+            {
+                const GUID &subtype = pActivePin->GetActiveMediaType().subtype;
+                if (pActivePin->IsVideoPin() && (subtype == MEDIASUBTYPE_CAVS ||
+                    subtype == MEDIASUBTYPE_AVS2_VIDEO || subtype == MEDIASUBTYPE_AVS3))
+                {
+                    bAVSVideo = true;
+                    break;
+                }
+            }
+        }
+        const REFERENCE_TIME rtStopCheck = bAVSVideo && pPacket->rtDTS != Packet::INVALID_TIME
+                                              ? pPacket->rtDTS
+                                              : pPacket->rtStart;
+        if (m_bStopValid && m_rtStop && (!bAVSVideo || pPin->IsVideoPin()) && rtStopCheck > m_rtStop)
         {
             DbgLog((LOG_TRACE, 10, L"::DeliverPacket(): Reached the designated stop time of %I64d at %I64d", m_rtStop,
-                    pPacket->rtStart));
+                    rtStopCheck));
             delete pPacket;
             return E_FAIL;
         }
@@ -927,7 +955,25 @@ HRESULT CLAVSplitter::DeliverPacket(Packet *pPacket)
                 // Initialize on the first stream coming in
                 if (pPin->m_rtPrev == AV_NOPTS_VALUE && m_rtOffset == AV_NOPTS_VALUE)
                 {
-                    pPin->m_rtPrev = 0;
+                    // AVS TS seeks may decode from the beginning to restore
+                    // references. Negative preroll is relative to the new
+                    // segment, not a timestamp discontinuity, even when the
+                    // first packet belongs to an audio stream.
+                    bool bAVSVideo = false;
+                    for (CLAVOutputPin *pActivePin : m_pActivePins)
+                    {
+                        if (!pActivePin->IsVideoPin())
+                            continue;
+
+                        const GUID &subtype = pActivePin->GetActiveMediaType().subtype;
+                        if (subtype == MEDIASUBTYPE_CAVS || subtype == MEDIASUBTYPE_AVS2_VIDEO ||
+                            subtype == MEDIASUBTYPE_AVS3)
+                        {
+                            bAVSVideo = true;
+                            break;
+                        }
+                    }
+                    pPin->m_rtPrev = bAVSVideo ? pPacket->rtStart : 0;
                     m_rtOffset = 0;
                 }
 
@@ -952,6 +998,13 @@ HRESULT CLAVSplitter::DeliverPacket(Packet *pPacket)
 
         pPacket->rtStart = (REFERENCE_TIME)(pPacket->rtStart / m_dRate);
         pPacket->rtStop = (REFERENCE_TIME)(pPacket->rtStop / m_dRate);
+
+        if (pPacket->rtDTS != Packet::INVALID_TIME)
+        {
+            REFERENCE_TIME rtOffset =
+                (m_pDemuxer->GetContainerFlags() & LAVFMT_TS_DISCONT) ? m_rtOffset : 0;
+            pPacket->rtDecodeTime = (REFERENCE_TIME)((pPacket->rtDTS - m_rtStart + rtOffset) / m_dRate);
+        }
     }
 
     if (m_bDiscontinuitySent.find(pPacket->StreamId) == m_bDiscontinuitySent.end())
@@ -1203,6 +1256,7 @@ STDMETHODIMP CLAVSplitter::SetPositionsInternal(void *caller, LONGLONG *pCurrent
 
     REFERENCE_TIME
     rtCurrent = m_rtCurrent, rtStop = m_rtStop;
+    const BOOL bStopWasValid = m_bStopValid;
 
     if (pCurrent)
     {
@@ -1235,7 +1289,8 @@ STDMETHODIMP CLAVSplitter::SetPositionsInternal(void *caller, LONGLONG *pCurrent
         }
     }
 
-    if (m_rtLastStart == rtCurrent && m_rtLastStop == rtStop && m_LastSeekers.find(caller) == m_LastSeekers.end())
+    if (bStopWasValid == m_bStopValid && m_rtLastStart == rtCurrent && m_rtLastStop == rtStop &&
+        m_LastSeekers.find(caller) == m_LastSeekers.end())
     {
         m_LastSeekers.insert(caller);
         return S_OK;

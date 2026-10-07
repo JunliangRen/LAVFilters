@@ -113,6 +113,13 @@ STDMETHODIMP CMediaPacketSample::SetSideData(GUID guidType, const BYTE *pData, s
 
 STDMETHODIMP CMediaPacketSample::GetSideData(GUID guidType, const BYTE **pData, size_t *pSize)
 {
+    if (guidType == IID_MediaSideDataLAVDTS && m_pPacket && m_pPacket->rtDecodeTime != Packet::INVALID_TIME)
+    {
+        *pData = (const BYTE *)&m_pPacket->rtDecodeTime;
+        *pSize = sizeof(m_pPacket->rtDecodeTime);
+        return S_OK;
+    }
+
     if (guidType == IID_MediaSideDataFFMpeg && m_pSideData)
     {
         *pData = (const BYTE *)m_pSideData;

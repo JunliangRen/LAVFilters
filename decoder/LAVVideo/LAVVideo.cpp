@@ -1018,6 +1018,16 @@ HRESULT CLAVVideo::NewSegment(REFERENCE_TIME tStart, REFERENCE_TIME tStop, doubl
 
     PerformFlush();
 
+    const AVCodecID codec = FindCodecId(&m_pInput->CurrentMediaType());
+    m_rtAVSSegmentStop = AV_NOPTS_VALUE;
+    if ((codec == AV_CODEC_ID_CAVS || codec == AV_CODEC_ID_AVS2 || codec == AV_CODEC_ID_AVS3) &&
+        tStop > tStart && tStop != _I64_MAX && dRate > 0.0)
+    {
+        const double rtSegmentStop = ((double)tStop - tStart) / dRate;
+        if (rtSegmentStop < (double)_I64_MAX)
+            m_rtAVSSegmentStop = (REFERENCE_TIME)rtSegmentStop;
+    }
+
     if (m_pCCOutputPin)
         m_pCCOutputPin->DeliverNewSegment(tStart, tStop, dRate);
 
@@ -1942,7 +1952,10 @@ STDMETHODIMP CLAVVideo::Deliver(LAVFrame *pFrame)
     else
         m_rtAvgTimePerFrame = pFrame->avgFrameDuration;
 
-    if (pFrame->rtStart < 0)
+    // Reference pictures decoded past a bounded AVS segment are needed for
+    // earlier B pictures, but must not be presented beyond the segment stop.
+    if (pFrame->rtStart < 0 ||
+        (m_rtAVSSegmentStop != AV_NOPTS_VALUE && pFrame->rtStart >= m_rtAVSSegmentStop))
     {
         ReleaseFrame(&pFrame);
         return S_OK;
