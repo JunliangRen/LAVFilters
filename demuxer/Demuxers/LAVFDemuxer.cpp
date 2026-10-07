@@ -41,6 +41,7 @@ extern "C"
 #include "libavformat/mpegts.h"
 #include "libavformat/matroska.h"
 #include "libavutil/avstring.h"
+#include "libavutil/common.h"
 
     enum AVCodecID ff_get_pcm_codec_id(int bps, int flt, int be, int sflags);
 #include "libavformat/isom.h"
@@ -2100,6 +2101,21 @@ STDMETHODIMP CLAVFDemuxer::FlushDOVIRPUMergeQueues()
 STDMETHODIMP CLAVFDemuxer::Seek(REFERENCE_TIME rTime)
 {
     int seekStreamId = m_dActiveStreams[video];
+
+    if (m_bMPEGTS && !m_pBluRay && seekStreamId >= 0 && m_avFormat->pb &&
+        (m_avFormat->pb->seekable & AVIO_SEEKABLE_NORMAL) && !(m_avFormat->flags & AVFMT_FLAG_NETWORK))
+    {
+        AVCodecID codec = m_avFormat->streams[seekStreamId]->codecpar->codec_id;
+        if (codec == AV_CODEC_ID_CAVS || codec == AV_CODEC_ID_AVS2 || codec == AV_CODEC_ID_AVS3)
+        {
+            // MPEG-TS timestamp seeking does not locate an AVS random access point. Decode from the
+            // beginning to restore sequence headers and reference pictures; the requested segment
+            // start remains unchanged, so the decoder discards the resulting preroll frames.
+            DbgLog((LOG_TRACE, 10, L"::Seek() -- Replaying AVS MPEG-TS from the beginning for target %I64d", rTime));
+            return SeekByte(0, AVSEEK_FLAG_BACKWARD);
+        }
+    }
+
     int64_t seek_pts = 0;
 retry:
     // If we have a video stream, seek on that one. If we don't, well, then don't!
@@ -2864,6 +2880,8 @@ STDMETHODIMP CLAVFDemuxer::CreateStreams()
     int64_t st_duration = 0;
     int64_t start_time = INT64_MAX;
     int64_t st_start_time = 0;
+    int64_t end_time = INT64_MIN;
+    bool bAVSVideo = false;
 
     // Number of streams (either in file or in program)
     unsigned int nbIndex = bProgram ? m_avFormat->programs[m_program]->nb_stream_indexes : m_avFormat->nb_streams;
@@ -2894,10 +2912,22 @@ STDMETHODIMP CLAVFDemuxer::CreateStreams()
                 if (st_start_time < start_time)
                     start_time = st_start_time;
             }
+            if (st->duration != AV_NOPTS_VALUE && st->start_time != AV_NOPTS_VALUE && st_duration >= 0)
+                end_time = max(end_time, av_sat_add64(st_start_time, st_duration));
+
+            const AVCodecID codec = st->codecpar->codec_id;
+            if (st->codecpar->codec_type == AVMEDIA_TYPE_VIDEO &&
+                (codec == AV_CODEC_ID_CAVS || codec == AV_CODEC_ID_AVS2 || codec == AV_CODEC_ID_AVS3))
+                bAVSVideo = true;
         }
         if (st->codecpar->codec_id == AV_CODEC_ID_HDMV_PGS_SUBTITLE)
             bHasPGS = true;
     }
+
+    // AVS transport streams can start video well after audio. Include that
+    // lead in the selected program's duration on the shared presentation clock.
+    if (m_bMPEGTS && bAVSVideo && start_time != INT64_MAX && end_time != INT64_MIN)
+        duration = max(duration, av_sat_sub64(end_time, start_time));
 
     if ((m_bTSDiscont || m_avFormat->duration == AV_NOPTS_VALUE) && duration != INT64_MIN)
     {

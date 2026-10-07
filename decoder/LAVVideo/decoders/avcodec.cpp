@@ -937,6 +937,17 @@ STDMETHODIMP CDecAvcodec::FillAVPacketData(AVPacket *avpkt, const uint8_t *buffe
                 pFFSideData = nullptr;
             }
 
+            // AVS streams can contain unreliable PTS. Preserve the independent
+            // decode timestamp so FFmpeg can select a best-effort display time.
+            if (m_nCodecId == AV_CODEC_ID_CAVS || m_nCodecId == AV_CODEC_ID_AVS2 || m_nCodecId == AV_CODEC_ID_AVS3)
+            {
+                const BYTE *pDTS = nullptr;
+                size_t nDTSSize = 0;
+                if (SUCCEEDED(pSideData->GetSideData(IID_MediaSideDataLAVDTS, &pDTS, &nDTSSize)) &&
+                    pDTS && nDTSSize == sizeof(REFERENCE_TIME))
+                    memcpy(&avpkt->dts, pDTS, sizeof(REFERENCE_TIME));
+            }
+
             SafeRelease(&pSideData);
             CopyMediaSideDataFF(avpkt, &pFFSideData);
         }
@@ -1300,8 +1311,11 @@ send_packet:
         if (m_bFFReordering)
         {
             rtStart = m_pFrame->pts;
+            if ((m_nCodecId == AV_CODEC_ID_CAVS || m_nCodecId == AV_CODEC_ID_AVS2 || m_nCodecId == AV_CODEC_ID_AVS3) &&
+                m_pFrame->best_effort_timestamp != AV_NOPTS_VALUE)
+                rtStart = m_pFrame->best_effort_timestamp;
             if (m_pFrame->duration)
-                rtStop = m_pFrame->pts + m_pFrame->duration;
+                rtStop = rtStart + m_pFrame->duration;
             else
                 rtStop = AV_NOPTS_VALUE;
         }
@@ -1505,8 +1519,8 @@ send_packet:
             pOutFrame->priv_data = pFrameRef;
             pOutFrame->destruct = lav_avframe_free;
 
-            // Check alignment on rawvideo, which can be off depending on the source file
-            if (m_nCodecId == AV_CODEC_ID_RAWVIDEO)
+            // Rawvideo and davs2 can provide tightly packed planes without SIMD alignment.
+            if (m_nCodecId == AV_CODEC_ID_RAWVIDEO || m_nCodecId == AV_CODEC_ID_AVS2)
             {
                 for (int i = 0; i < 4; i++)
                 {
@@ -1590,9 +1604,13 @@ STDMETHODIMP CDecAvcodec::Flush()
     m_tcBFrameDelay[1].rtStart = m_tcBFrameDelay[1].rtStop = AV_NOPTS_VALUE;
 
     if (!(m_pCallback->GetDecodeFlags() & LAV_VIDEO_DEC_FLAG_DVD) &&
-        (m_nCodecId == AV_CODEC_ID_H264 || m_nCodecId == AV_CODEC_ID_MPEG2VIDEO))
+        (m_nCodecId == AV_CODEC_ID_H264 || m_nCodecId == AV_CODEC_ID_MPEG2VIDEO || m_nCodecId == AV_CODEC_ID_AVS2))
     {
-        CDecAvcodec::InitDecoder(m_nCodecId, &m_pCallback->GetInputMediaType(), nullptr);
+        // davs2 flush drains pictures but retains reference and picture-order
+        // state; reopening is required before decoding a new seek segment.
+        HRESULT hr = CDecAvcodec::InitDecoder(m_nCodecId, &m_pCallback->GetInputMediaType(), nullptr);
+        if (FAILED(hr))
+            return hr;
     }
 
     return __super::Flush();

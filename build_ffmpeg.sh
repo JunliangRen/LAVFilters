@@ -4,6 +4,7 @@ arch=x86
 archdir=Win32
 clean_build=true
 cross_prefix=
+enable_avs=false
 
 CV2PDB=../thirdparty/contrib/cv2pdb.exe
 
@@ -19,6 +20,9 @@ do
             ;;
     quick)
             clean_build=false
+            ;;
+    avs)
+            enable_avs=true
             ;;
     *)
             echo "Unknown Option $opt"
@@ -36,9 +40,15 @@ copy_libs() (
   for file in lib*/*-lav-*.dll; do
     file_basename=$(basename $file)
     file_pdb=$(basename $file .dll).pdb
-    ${CV2PDB} -p${file_pdb} ${file} ../bin_${archdir}d/${file_basename}
-    cp ../bin_${archdir}d/${file_basename} ../bin_${archdir}/
-    cp ../bin_${archdir}d/${file_pdb} ../bin_${archdir}/
+    ${CV2PDB} -p${file_pdb} ${file} ../bin_${archdir}d/${file_basename} || exit 1
+    if $enable_avs && [ "${arch}" == "x86" ]; then
+      # cv2pdb drops the COFF string table needed by long x86 section names.
+      # Strip DWARF from the original image for Release; retain the PDB build above.
+      objcopy --strip-debug ${file} ../bin_${archdir}/${file_basename} || exit 1
+    else
+      cp ../bin_${archdir}d/${file_basename} ../bin_${archdir}/ || exit 1
+    fi
+    cp ../bin_${archdir}d/${file_pdb} ../bin_${archdir}/ || exit 1
   done
 
   # copy lib files
@@ -88,6 +98,10 @@ configure() (
     --disable-stripping             \
     --arch=${arch}"
 
+  if $enable_avs ; then
+    OPTIONS="${OPTIONS} --enable-libdavs2 --enable-libuavs3d"
+  fi
+
   EXTRA_CFLAGS="-fno-tree-vectorize -D_WIN32_WINNT=0x0601 -DWINVER=0x0601 -gdwarf-5"
   EXTRA_LDFLAGS=""
   PKG_CONFIG_PREFIX_DIR=""
@@ -129,6 +143,9 @@ if $clean_build ; then
 
     ## show configure output
     cat ffbuild/config.out
+    if [ ${CONFIGRETVAL} -ne 0 ]; then
+      exit ${CONFIGRETVAL}
+    fi
 fi
 
 ## Only if configure succeeded, actually build

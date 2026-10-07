@@ -1,0 +1,6 @@
+#define DAVS2_BIT_DEPTH     8
+#define DAVS2_GPL           1
+#define DAVS2_INTERLACED    1
+#define DAVS2_CHROMA_FORMAT DAVS2_CSP_I420
+#define DAVS2_BUILD      16
+#define DAVS2_POINTVER "1.6.206"

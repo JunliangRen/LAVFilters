@@ -26,6 +26,11 @@
 DEFINE_GUID(IID_MediaSideDataFFMpeg,
   0x8ca03d5, 0x1803, 0x4fdc, 0x85, 0x15, 0x5b, 0x9d, 0xec, 0x92, 0x43, 0x7a);
 
+// Private LAV sample metadata: REFERENCE_TIME DTS, in the same segment/rate
+// coordinate system as IMediaSample::GetTime. Does not change the FFmpeg ABI.
+DEFINE_GUID(IID_MediaSideDataLAVDTS,
+  0x56b9aa2c, 0x276b, 0x4942, 0x8b, 0xe0, 0xb0, 0xdd, 0x74, 0xbc, 0x5a, 0x81);
+
 extern "C" {
 #include "libavcodec/avcodec.h"
 }
