@@ -111,6 +111,7 @@ bool Packet::CopyProperties(const Packet *src)
     rtStop = src->rtStop;
     rtPTS = src->rtPTS;
     rtDTS = src->rtDTS;
+    rtDecodeTime = src->rtDecodeTime;
     if (src->pmt)
     {
         DeleteMediaType(pmt);

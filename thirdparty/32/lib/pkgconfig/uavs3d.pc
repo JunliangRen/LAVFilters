@@ -1,0 +1,10 @@
+prefix=${pcfiledir}/../..
+libdir=${prefix}/lib
+includedir=${prefix}/include
+
+Name: uavs3d
+Description: AVS3 baseline 8/10-bit decoder library
+Version: 1.2.89
+Libs: -L${libdir} -luavs3d
+Libs.private: -Wl,-Bstatic -lwinpthread -Wl,-Bdynamic -static-libgcc -lm
+Cflags: -I${includedir}

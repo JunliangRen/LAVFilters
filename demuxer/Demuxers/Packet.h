@@ -58,6 +58,9 @@ class Packet
     REFERENCE_TIME rtPTS = INVALID_TIME;
     REFERENCE_TIME rtDTS = INVALID_TIME;
 
+    // DTS adjusted for the downstream segment and playback rate.
+    REFERENCE_TIME rtDecodeTime = INVALID_TIME;
+
     AM_MEDIA_TYPE *pmt = nullptr;
 
 #define LAV_PACKET_PARSED 0x0001
