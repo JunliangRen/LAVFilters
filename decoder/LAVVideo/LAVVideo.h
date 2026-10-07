@@ -291,6 +291,7 @@ class __declspec(uuid("EE30215D-164F-4A92-A4EB-9D4C13390F9F")) CLAVVideo
     REFERENCE_TIME m_rtPrevStart = 0;
     REFERENCE_TIME m_rtPrevStop = 0;
     REFERENCE_TIME m_rtAvgTimePerFrame = AV_NOPTS_VALUE;
+    REFERENCE_TIME m_rtAVSSegmentStop = AV_NOPTS_VALUE;
 
     BOOL m_bForceInputAR = FALSE;
     BOOL m_bSendMediaType = FALSE;

@@ -1,0 +1,10 @@
+prefix=${pcfiledir}/../..
+libdir=${prefix}/lib
+includedir=${prefix}/include
+
+Name: davs2
+Description: AVS2 8-bit decoder library
+Version: 1.6.206
+Libs: -L${libdir} -ldavs2
+Libs.private: -Wl,-Bstatic -lstdc++ -lwinpthread -Wl,-Bdynamic -static-libgcc -lm
+Cflags: -I${includedir}
