@@ -49,6 +49,20 @@ clean() (
   make distclean > /dev/null 2>&1
 )
 
+apply_patches() (
+  ffmpeg_patch="../thirdparty/ffmpeg-patches/cuvid-sequence-framerate.patch"
+  if git apply --ignore-space-change --check "$ffmpeg_patch" > /dev/null 2>&1 ; then
+    echo "Applying CUVID sequence framerate patch..."
+    git apply --ignore-space-change "$ffmpeg_patch" || exit 1
+  elif git apply --ignore-space-change --reverse --check "$ffmpeg_patch" > /dev/null 2>&1 ; then
+    echo "CUVID sequence framerate patch is already applied."
+  else
+    echo "ERROR: CUVID sequence framerate patch does not match this FFmpeg source." >&2
+    git apply --ignore-space-change --check "$ffmpeg_patch" >&2
+    exit 1
+  fi
+)
+
 configure() (
   OPTIONS="
     --enable-shared                 \
@@ -64,13 +78,17 @@ configure() (
     --disable-muxers                \
     --enable-muxer=spdif            \
     --disable-bsfs                  \
-    --enable-bsf=extract_extradata,dovi_split \
+    --enable-bsf=extract_extradata,dovi_split,h264_mp4toannexb,hevc_mp4toannexb \
     --disable-avdevice              \
     --disable-encoders              \
     --disable-devices               \
     --disable-programs              \
     --disable-doc                   \
     --enable-avisynth               \
+    --enable-ffnvcodec              \
+    --enable-cuda                   \
+    --enable-cuvid                  \
+    --enable-nvdec                  \
     --enable-d3d11va                \
     --enable-dxva2                  \
     --enable-schannel               \
@@ -81,6 +99,9 @@ configure() (
 
   EXTRA_CFLAGS="-D_WIN32_WINNT=0x0601 -DWINVER=0x0601 -Zo -GS- -I../thirdparty/$archincdir/include/"
   EXTRA_LDFLAGS=""
+  # Absolute paths let MSYS convert the search list for native Windows pkg-config.
+  NV_CODEC_PKG_CONFIG_PATH="$(cd ../thirdparty/nv-codec-headers/lib/pkgconfig && pwd)" || exit 1
+  export PKG_CONFIG_PATH="${NV_CODEC_PKG_CONFIG_PATH}${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
 
   if $debug ; then
     OPTIONS="${OPTIONS} --enable-debug --disable-optimizations"
@@ -92,7 +113,7 @@ configure() (
     EXTRA_LDFLAGS="${EXTRA_LDFLAGS} -NODEFAULTLIB:libcmt"
   fi
 
-  sh configure --toolchain=msvc --extra-cflags="${EXTRA_CFLAGS}" --extra-ldflags="${EXTRA_LDFLAGS}" ${OPTIONS}
+  sh configure --toolchain=msvc --pkg-config=pkg-config --extra-cflags="${EXTRA_CFLAGS}" --extra-ldflags="${EXTRA_LDFLAGS}" ${OPTIONS}
 )
 
 build() (
@@ -103,7 +124,9 @@ echo Building ffmpeg in MSVC Debug config...
 
 make_dirs
 
-cd ffmpeg
+cd ffmpeg || exit 1
+
+apply_patches || exit 1
 
 if $clean_build ; then
     clean

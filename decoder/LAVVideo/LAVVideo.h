@@ -266,6 +266,7 @@ class __declspec(uuid("EE30215D-164F-4A92-A4EB-9D4C13390F9F")) CLAVVideo
     HRESULT DeDirectFrame(LAVFrame *pFrame, bool bDisableDirectMode = true);
 
     HRESULT Filter(LAVFrame *pFrame);
+    void ResetFilterGraph();
     HRESULT DeliverToRenderer(LAVFrame *pFrame);
 
     HRESULT PerformFlush();
@@ -319,6 +320,7 @@ class __declspec(uuid("EE30215D-164F-4A92-A4EB-9D4C13390F9F")) CLAVVideo
     int m_filterWidth = 0;
     int m_filterHeight = 0;
     LAVFrame m_FilterPrevFrame;
+    BOOL m_filterFramePerField = FALSE;
 
     BOOL m_LAVPinInfoValid = FALSE;
     LAVPinInfo m_LAVPinInfo;
@@ -365,6 +367,7 @@ class __declspec(uuid("EE30215D-164F-4A92-A4EB-9D4C13390F9F")) CLAVVideo
         DWORD HWAccelDeviceDXVA2Desc;
         DWORD HWAccelDeviceD3D11;
         DWORD HWAccelDeviceD3D11Desc;
+        DWORD HWAccelDeviceCUVIDFFmpeg;
         BOOL bH264MVCOverride;
         BOOL bCCOutputPinEnabled;
     } m_settings;

@@ -253,6 +253,7 @@ HRESULT CLAVVideoSettingsProp::OnActivate()
 
     WCHAR hwAccelNone[] = L"None";
     WCHAR hwAccelCUDA[] = L"NVIDIA CUVID (old)";
+    WCHAR hwAccelCUVIDFFmpeg[] = L"NVIDIA CUVID (FFmpeg)";
     WCHAR hwAccelQuickSync[] = L"Intel\xae QuickSync (old)";
     WCHAR hwAccelDXVA2CB[] = L"DXVA2 (copy-back)";
     WCHAR hwAccelDXVA2N[] = L"DXVA2 (native)";
@@ -262,6 +263,7 @@ HRESULT CLAVVideoSettingsProp::OnActivate()
     AddComboBoxEntryWithData(m_Dlg, IDC_HWACCEL, hwAccelDXVA2N, HWAccel_DXVA2Native);
     AddComboBoxEntryWithData(m_Dlg, IDC_HWACCEL, hwAccelD3D11, HWAccel_D3D11);
     AddComboBoxEntryWithData(m_Dlg, IDC_HWACCEL, hwAccelCUDA, HWAccel_CUDA);
+    AddComboBoxEntryWithData(m_Dlg, IDC_HWACCEL, hwAccelCUVIDFFmpeg, HWAccel_CUVIDFFmpeg);
     AddComboBoxEntryWithData(m_Dlg, IDC_HWACCEL, hwAccelQuickSync, HWAccel_QuickSync);
 
     // Init the fieldorder Combo Box
@@ -421,9 +423,10 @@ HRESULT CLAVVideoSettingsProp::UpdateHWOptions()
 
     DWORD dwSupport = m_pVideoSettings->CheckHWAccelSupport(hwAccel);
     BOOL bEnabled = (hwAccel != HWAccel_None) && dwSupport;
-    BOOL bHWDeint = bEnabled && (hwAccel == HWAccel_CUDA || hwAccel == HWAccel_QuickSync);
+    BOOL bCUVID = hwAccel == HWAccel_CUDA || hwAccel == HWAccel_CUVIDFFmpeg;
+    BOOL bHWDeint = bEnabled && (bCUVID || hwAccel == HWAccel_QuickSync);
     BOOL bHWDeintEnabled = bHWDeint && (BOOL)SendDlgItemMessage(m_Dlg, IDC_HWDEINT_ENABLE, BM_GETCHECK, 0, 0);
-    BOOL bCUDAOnly = bEnabled && (hwAccel == HWAccel_CUDA);
+    BOOL bCUVIDOnly = bEnabled && bCUVID;
     BOOL bDVD = bEnabled && (BOOL)SendDlgItemMessage(m_Dlg, IDC_HWACCEL_MPEG2, BM_GETCHECK, 0, 0);
     BOOL bHEVC = bEnabled && (hwAccel != HWAccel_QuickSync);
     BOOL bVP9 = bEnabled && (hwAccel != HWAccel_QuickSync);
@@ -436,7 +439,7 @@ HRESULT CLAVVideoSettingsProp::UpdateHWOptions()
     EnableWindow(GetDlgItem(m_Dlg, IDC_HWACCEL_VC1), bEnabled);
     EnableWindow(GetDlgItem(m_Dlg, IDC_HWACCEL_MPEG2), bEnabled);
 
-    EnableWindow(GetDlgItem(m_Dlg, IDC_HWACCEL_MPEG4), bCUDAOnly);
+    EnableWindow(GetDlgItem(m_Dlg, IDC_HWACCEL_MPEG4), bCUVIDOnly);
     EnableWindow(GetDlgItem(m_Dlg, IDC_HWACCEL_HEVC), bHEVC);
     EnableWindow(GetDlgItem(m_Dlg, IDC_HWACCEL_VP9), bVP9);
     EnableWindow(GetDlgItem(m_Dlg, IDC_HWACCEL_AV1), bAV1);

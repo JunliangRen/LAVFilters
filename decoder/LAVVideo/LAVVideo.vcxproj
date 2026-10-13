@@ -93,6 +93,7 @@
     <ClCompile Include="CCOutputPin.cpp" />
     <ClCompile Include="decoders\avcodec.cpp" />
     <ClCompile Include="decoders\cuvid.cpp" />
+    <ClCompile Include="decoders\cuvid_ffmpeg.cpp" />
     <ClCompile Include="decoders\d3d11va.cpp" />
     <ClCompile Include="decoders\d3d11\D3D11SurfaceAllocator.cpp" />
     <ClCompile Include="decoders\dxva2dec.cpp" />
@@ -144,6 +145,7 @@
     <ClInclude Include="CCOutputPin.h" />
     <ClInclude Include="decoders\avcodec.h" />
     <ClInclude Include="decoders\cuvid.h" />
+    <ClInclude Include="decoders\cuvid_ffmpeg.h" />
     <ClInclude Include="decoders\d3d11va.h" />
     <ClInclude Include="decoders\d3d11\D3D11SurfaceAllocator.h" />
     <ClInclude Include="decoders\DecBase.h" />

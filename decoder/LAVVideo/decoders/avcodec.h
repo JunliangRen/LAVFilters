@@ -53,8 +53,14 @@ class CDecAvcodec : public CDecBase
     STDMETHODIMP Init();
 
   protected:
+    virtual const AVCodec *FindDecoder(AVCodecID codec);
     virtual HRESULT AdditionaDecoderInit() { return S_FALSE; }
     virtual HRESULT PostDecode() { return S_FALSE; }
+    virtual HRESULT HandleDecodeError(int error) { return S_FALSE; }
+    virtual BOOL IsHardwareDeinterlaced() { return FALSE; }
+    virtual REFERENCE_TIME GetFrameAverageDuration();
+    virtual BOOL UseSourcePixelFormatHints() { return TRUE; }
+    virtual BOOL UseCodecParser() { return TRUE; }
     virtual HRESULT HandleDXVA2Frame(LAVFrame *pFrame) { return S_FALSE; }
     virtual BOOL IsHardwareAccelerator() { return FALSE; }
     STDMETHODIMP DestroyDecoder();

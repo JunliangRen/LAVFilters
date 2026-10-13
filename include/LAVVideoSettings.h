@@ -135,6 +135,7 @@ typedef enum LAVHWAccel
     HWAccel_DXVA2CopyBack = HWAccel_DXVA2,
     HWAccel_DXVA2Native,
     HWAccel_D3D11,
+    HWAccel_CUVIDFFmpeg = 6,
     HWAccel_NB, // Number of HWAccels
 } LAVHWAccel;
 
@@ -323,7 +324,8 @@ interface __declspec(uuid("FA40D6E9-4D38-4761-ADD2-71A9EC5FD32F")) ILAVVideoSett
     // Get the deinterlacing output for the hardware decoder
     STDMETHOD_(LAVDeintOutput, GetHWAccelDeintOutput)() = 0;
 
-    // deprecated. HQ mode is only supported by NVIDIA CUVID/NVDEC and officially deprecated by NVIDIA
+    // Deprecated. Only supported by legacy NVIDIA CUVID, and officially deprecated by NVIDIA.
+    // NVIDIA CUVID (FFmpeg) does not use this setting.
     STDMETHOD(SetHWAccelDeintHQ)(BOOL bHQ) = 0;
     STDMETHOD_(BOOL, GetHWAccelDeintHQ)() = 0;
 
@@ -384,10 +386,11 @@ interface __declspec(uuid("FA40D6E9-4D38-4761-ADD2-71A9EC5FD32F")) ILAVVideoSett
     STDMETHOD_(LAVDeintMode, GetDeinterlacingMode)() = 0;
 
     // Set the index of the GPU to be used for hardware decoding
-    // Only supported for CUVID and DXVA2 copy-back. If the device is not valid, it'll fallback to auto-detection
+    // Only supported for legacy CUVID, CUVID (FFmpeg), and DXVA2 copy-back.
+    // If the device is not valid, it'll fallback to auto-detection.
     // Must be called before an input is connected to LAV Video, and the setting is non-persistent
-    // NOTE: For CUVID, the index defines the index of the CUDA capable device, while for DXVA2, the list includes all
-    // D3D9 devices
+    // NOTE: For both CUVID backends, the index defines the index of the CUDA capable device, while for DXVA2, the
+    // list includes all D3D9 devices. CUVID (FFmpeg) uses this override when its persistent device is Automatic.
     STDMETHOD(SetGPUDeviceIndex)(DWORD dwDevice) = 0;
 
     // Get the number of available devices for the specified HWAccel
@@ -401,6 +404,7 @@ interface __declspec(uuid("FA40D6E9-4D38-4761-ADD2-71A9EC5FD32F")) ILAVVideoSett
     // In contrast to SetGPUDeviceIndex, this setting is hwaccel-specific and persistent
     // dwDeviceIdentifier is an optional parameter that identifies the selected device (ie. its device id), set to 0 if
     // not used
+    // CUVID (FFmpeg) persists the CUDA device index and does not use a device identifier.
 #define LAVHWACCEL_DEVICE_DEFAULT ((DWORD)-1)
     STDMETHOD_(DWORD, GetHWAccelDeviceIndex)(LAVHWAccel hwAccel, DWORD * pdwDeviceIdentifier) = 0;
     STDMETHOD(SetHWAccelDeviceIndex)(LAVHWAccel hwAccel, DWORD dwIndex, DWORD dwDeviceIdentifier) = 0;
