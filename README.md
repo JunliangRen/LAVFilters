@@ -166,10 +166,13 @@ Automatic selection.
 
 Both FFmpeg build scripts enable CUDA/CUVID/NVDEC using the pinned SDK 13.0
 headers in `thirdparty/nv-codec-headers`. No CUDA Toolkit is required to build
-or run the decoder. Both scripts also apply the local
-[CUVID patches](thirdparty/ffmpeg-patches/README.md), which preserve field-rate
-output timing after repeated sequence headers and seeks and support live
-deinterlacing changes for this backend.
+or run the decoder. Both scripts build the pinned FFmpeg submodule directly.
+Its CUVID changes are maintained on the
+[`codex/cuvid-live-deinterlace` branch](https://github.com/JunliangRen/FFmpeg/tree/codex/cuvid-live-deinterlace)
+of the FFmpeg fork, and LAV records their exact commit in the submodule gitlink.
+They preserve field-rate output timing after repeated sequence headers and seeks
+and support live deinterlacing changes for this backend; see the
+[implementation details](tests/cuvid-ffmpeg/README.md#pinned-ffmpeg-cuvid-implementation).
 The GCC build preserves matching DLL/PDB pairs in both Release and Debug. Its
 cv2pdb step restores GNU long section names and verifies that runtime section
 addresses and bytes have not changed.
