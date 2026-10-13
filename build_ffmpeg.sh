@@ -59,20 +59,6 @@ clean() (
   make distclean > /dev/null 2>&1
 )
 
-apply_patches() (
-  ffmpeg_patch="../thirdparty/ffmpeg-patches/cuvid-sequence-framerate.patch"
-  if git apply --ignore-space-change --check "$ffmpeg_patch" > /dev/null 2>&1 ; then
-    echo "Applying CUVID sequence framerate patch..."
-    git apply --ignore-space-change "$ffmpeg_patch" || exit 1
-  elif git apply --ignore-space-change --reverse --check "$ffmpeg_patch" > /dev/null 2>&1 ; then
-    echo "CUVID sequence framerate patch is already applied."
-  else
-    echo "ERROR: CUVID sequence framerate patch does not match this FFmpeg source." >&2
-    git apply --ignore-space-change --check "$ffmpeg_patch" >&2
-    exit 1
-  fi
-)
-
 configure() (
   OPTIONS="
     --enable-shared                 \
@@ -153,8 +139,6 @@ echo Building ffmpeg in GCC ${arch} Release config...
 echo
 
 cd ffmpeg || exit 1
-
-apply_patches || exit 1
 
 if $clean_build ; then
     clean
