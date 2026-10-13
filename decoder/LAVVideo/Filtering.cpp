@@ -38,14 +38,28 @@ static void avfilter_free_lav_buffer(LAVFrame *pFrame)
     av_frame_free((AVFrame **)&pFrame->priv_data);
 }
 
+void CLAVVideo::ResetFilterGraph()
+{
+    avfilter_graph_free(&m_pFilterGraph);
+    m_pFilterBufferSrc = nullptr;
+    m_pFilterBufferSink = nullptr;
+    m_filterPixFmt = LAVPixFmt_None;
+    m_filterWidth = m_filterHeight = 0;
+    m_filterFramePerField = FALSE;
+    memset(&m_FilterPrevFrame, 0, sizeof(m_FilterPrevFrame));
+}
+
 HRESULT CLAVVideo::Filter(LAVFrame *pFrame)
 {
     int ret = 0;
     BOOL bFlush = pFrame->flags & LAV_FRAME_FLAG_FLUSH;
-    if (m_Decoder.IsInterlaced(FALSE) && m_settings.DeintMode != DeintMode_Disable &&
-        m_settings.SWDeintMode != SWDeintMode_None &&
-        ((bFlush && m_pFilterGraph) || pFrame->format == LAVPixFmt_YUV420 || pFrame->format == LAVPixFmt_YUV422 ||
-         pFrame->format == LAVPixFmt_NV12 || (pFrame->format == LAVPixFmt_YUV422bX && pFrame->bpp == 10)))
+    // A queued graph belongs to its saved input and cadence, even when the
+    // decoder or current settings now bypass software processing.
+    if ((bFlush && m_pFilterGraph) ||
+        (!bFlush && m_Decoder.IsInterlaced(FALSE) && m_settings.DeintMode != DeintMode_Disable &&
+         m_settings.SWDeintMode != SWDeintMode_None &&
+         (pFrame->format == LAVPixFmt_YUV420 || pFrame->format == LAVPixFmt_YUV422 ||
+          pFrame->format == LAVPixFmt_NV12 || (pFrame->format == LAVPixFmt_YUV422bX && pFrame->bpp == 10))))
     {
         AVPixelFormat ff_pixfmt = bFlush ? AV_PIX_FMT_NONE : getFFPixelFormatFromLAV(pFrame->format, pFrame->bpp);
 
@@ -55,9 +69,12 @@ HRESULT CLAVVideo::Filter(LAVFrame *pFrame)
             DbgLog((LOG_TRACE, 10, L":Filter()(init) Initializing software deinterlacing filter..."));
             if (m_pFilterGraph)
             {
-                avfilter_graph_free(&m_pFilterGraph);
-                m_pFilterBufferSrc = nullptr;
-                m_pFilterBufferSink = nullptr;
+                HRESULT hr = Filter(GetFlushFrame());
+                if (FAILED(hr))
+                {
+                    ReleaseFrame(&pFrame);
+                    return hr;
+                }
             }
 
             m_filterPixFmt = pFrame->format;
@@ -144,6 +161,7 @@ HRESULT CLAVVideo::Filter(LAVFrame *pFrame)
                 goto deliver;
             }
 
+            m_filterFramePerField = m_settings.SWDeintOutput == DeintOutput_FramePerField;
             DbgLog((LOG_TRACE, 10, L":Filter()(init) avfilter Initialization complete"));
         }
 
@@ -201,32 +219,43 @@ HRESULT CLAVVideo::Filter(LAVFrame *pFrame)
 
             m_FilterPrevFrame = *pFrame;
             memset(m_FilterPrevFrame.data, 0, sizeof(m_FilterPrevFrame.data));
+            memset(m_FilterPrevFrame.stereo, 0, sizeof(m_FilterPrevFrame.stereo));
             m_FilterPrevFrame.destruct = nullptr;
+            m_FilterPrevFrame.priv_data = nullptr;
+            m_FilterPrevFrame.side_data = nullptr;
+            m_FilterPrevFrame.side_data_count = 0;
+            m_FilterPrevFrame.direct = false;
+            m_FilterPrevFrame.direct_lock = nullptr;
+            m_FilterPrevFrame.direct_unlock = nullptr;
         }
-        else
+        else if (!m_FilterPrevFrame.height)
         {
-            if (!m_FilterPrevFrame.height) // if height is not set, the frame is most likely not valid
-                return S_OK;
-            *pFrame = m_FilterPrevFrame;
+            ReleaseFrame(&pFrame);
+            ResetFilterGraph();
+            return S_OK;
         }
+        // The flush sentinel never owns the previous input's buffers or side data.
+        const LAVFrame *properties = bFlush ? &m_FilterPrevFrame : pFrame;
 
         if ((ret = av_buffersrc_write_frame(m_pFilterBufferSrc, in_frame)) < 0)
         {
             av_frame_free(&in_frame);
-            goto deliver;
+            if (bFlush || !refcountedFrame)
+                ReleaseFrame(&pFrame);
+            ResetFilterGraph();
+            return E_FAIL;
         }
 
-        BOOL bFramePerField =
-            (m_settings.SWDeintMode != SWDeintMode_None && m_settings.SWDeintOutput == DeintOutput_FramePerField);
+        BOOL bFramePerField = m_filterFramePerField;
 
         AVFrame *out_frame = av_frame_alloc();
         HRESULT hrDeliver = S_OK;
-        while (SUCCEEDED(hrDeliver) && (av_buffersink_get_frame(m_pFilterBufferSink, out_frame) >= 0))
+        while (SUCCEEDED(hrDeliver) && ((ret = av_buffersink_get_frame(m_pFilterBufferSink, out_frame)) >= 0))
         {
             LAVFrame *outFrame = nullptr;
             AllocateFrame(&outFrame);
 
-            REFERENCE_TIME rtDuration = pFrame->rtStop - pFrame->rtStart;
+            REFERENCE_TIME rtDuration = properties->rtStop - properties->rtStart;
             if (bFramePerField)
                 rtDuration >>= 1;
 
@@ -237,10 +266,10 @@ HRESULT CLAVVideo::Filter(LAVFrame *pFrame)
                                          ? LAVPixFmt_YUV422
                                          : (out_frame->format == AV_PIX_FMT_YUV422P10LE) ? LAVPixFmt_YUV422bX : LAVPixFmt_NV12;
             outFrame->sw_format = outFrame->format;
-            outFrame->bpp = pFrame->bpp;
-            outFrame->ext_format = pFrame->ext_format;
-            outFrame->avgFrameDuration = pFrame->avgFrameDuration;
-            outFrame->flags = pFrame->flags;
+            outFrame->bpp = properties->bpp;
+            outFrame->ext_format = properties->ext_format;
+            outFrame->avgFrameDuration = properties->avgFrameDuration;
+            outFrame->flags = properties->flags;
 
             outFrame->width = out_frame->width;
             outFrame->height = out_frame->height;
@@ -270,26 +299,35 @@ HRESULT CLAVVideo::Filter(LAVFrame *pFrame)
 
             hrDeliver = DeliverToRenderer(outFrame);
         }
-        if (!refcountedFrame)
+        if (SUCCEEDED(hrDeliver) && ret < 0 && ret != AVERROR(EAGAIN) && ret != AVERROR_EOF)
+            hrDeliver = E_FAIL;
+        if (bFlush || !refcountedFrame)
             ReleaseFrame(&pFrame);
         av_frame_free(&in_frame);
         av_frame_free(&out_frame);
 
         // We EOF'ed the graph, need to close it
         if (bFlush)
-        {
-            if (m_pFilterGraph)
-            {
-                avfilter_graph_free(&m_pFilterGraph);
-                m_pFilterBufferSrc = nullptr;
-                m_pFilterBufferSink = nullptr;
-            }
-        }
+            ResetFilterGraph();
 
-        return S_OK;
+        return hrDeliver;
     }
     else
     {
+        if (bFlush)
+        {
+            ReleaseFrame(&pFrame);
+            return S_OK;
+        }
+        if (m_pFilterGraph)
+        {
+            HRESULT hr = Filter(GetFlushFrame());
+            if (FAILED(hr))
+            {
+                ReleaseFrame(&pFrame);
+                return hr;
+            }
+        }
         m_filterPixFmt = LAVPixFmt_None;
     deliver:
         return DeliverToRenderer(pFrame);

@@ -474,6 +474,7 @@ interface ILAVDecoder
 ILAVDecoder *CreateDecoderAVCodec();
 ILAVDecoder *CreateDecoderWMV9MFT();
 ILAVDecoder *CreateDecoderCUVID();
+ILAVDecoder *CreateDecoderCUVIDFFmpeg();
 ILAVDecoder *CreateDecoderQuickSync();
 ILAVDecoder *CreateDecoderDXVA2();
 ILAVDecoder *CreateDecoderDXVA2Native();

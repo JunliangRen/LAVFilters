@@ -345,6 +345,13 @@ STDMETHODIMP CDecAvcodec::Init()
     return S_OK;
 }
 
+const AVCodec *CDecAvcodec::FindDecoder(AVCodecID codec)
+{
+    if (codec == AV_CODEC_ID_AV1 && IsHardwareAccelerator())
+        return avcodec_find_decoder_by_name("av1");
+    return avcodec_find_decoder(codec);
+}
+
 STDMETHODIMP CDecAvcodec::InitDecoder(AVCodecID codec, const CMediaType *pmt, const MediaSideDataFFMpeg *pSideData)
 {
     DestroyDecoder();
@@ -353,14 +360,7 @@ STDMETHODIMP CDecAvcodec::InitDecoder(AVCodecID codec, const CMediaType *pmt, co
     BITMAPINFOHEADER *pBMI = nullptr;
     videoFormatTypeHandler((const BYTE *)pmt->Format(), pmt->FormatType(), &pBMI);
 
-    if (codec == AV_CODEC_ID_AV1 && IsHardwareAccelerator())
-    {
-        m_pAVCodec = avcodec_find_decoder_by_name("av1");
-    }
-    else
-    {
-        m_pAVCodec = avcodec_find_decoder(codec);
-    }
+    m_pAVCodec = FindDecoder(codec);
     CheckPointer(m_pAVCodec, VFW_E_UNSUPPORTED_VIDEO);
 
     m_pAVCtx = avcodec_alloc_context3(m_pAVCodec);
@@ -369,11 +369,11 @@ STDMETHODIMP CDecAvcodec::InitDecoder(AVCodecID codec, const CMediaType *pmt, co
     DWORD dwDecFlags = m_pCallback->GetDecodeFlags();
 
     // Use parsing for mpeg1/2 at all times, or H264/HEVC when its not from LAV Splitter
-    if (codec == AV_CODEC_ID_MPEG1VIDEO || codec == AV_CODEC_ID_MPEG2VIDEO ||
+    if (UseCodecParser() && (codec == AV_CODEC_ID_MPEG1VIDEO || codec == AV_CODEC_ID_MPEG2VIDEO ||
         (!(dwDecFlags & LAV_VIDEO_DEC_FLAG_LAVSPLITTER) &&
          (pmt->subtype == MEDIASUBTYPE_H264 || pmt->subtype == MEDIASUBTYPE_h264 || pmt->subtype == MEDIASUBTYPE_X264 ||
           pmt->subtype == MEDIASUBTYPE_x264 || pmt->subtype == MEDIASUBTYPE_H264_bis ||
-          pmt->subtype == MEDIASUBTYPE_HEVC || pmt->subtype == MEDIASUBTYPE_H265)))
+          pmt->subtype == MEDIASUBTYPE_HEVC || pmt->subtype == MEDIASUBTYPE_H265))))
     {
         m_pParser = av_parser_init(codec);
     }
@@ -790,11 +790,11 @@ STDMETHODIMP CDecAvcodec::InitDecoder(AVCodecID codec, const CMediaType *pmt, co
             CMPEG2HeaderParser mpeg2Parser(m_pAVCtx->extradata, m_pAVCtx->extradata_size);
             if (mpeg2Parser.hdr.valid)
             {
-                if (mpeg2Parser.hdr.chroma < 2)
+                if (UseSourcePixelFormatHints() && mpeg2Parser.hdr.chroma < 2)
                 {
                     m_pAVCtx->pix_fmt = AV_PIX_FMT_YUV420P;
                 }
-                else if (mpeg2Parser.hdr.chroma == 2)
+                else if (UseSourcePixelFormatHints() && mpeg2Parser.hdr.chroma == 2)
                 {
                     m_pAVCtx->pix_fmt = AV_PIX_FMT_YUV422P;
                 }
@@ -824,7 +824,7 @@ STDMETHODIMP CDecAvcodec::InitDecoder(AVCodecID codec, const CMediaType *pmt, co
     else if (codec == AV_CODEC_ID_FRAPS)
         m_pAVCtx->pix_fmt = AV_PIX_FMT_BGR24;
 
-    if (bLAVInfoValid && lavPinInfo.pix_fmt != AV_PIX_FMT_NONE && codec != AV_CODEC_ID_FRAPS)
+    if (UseSourcePixelFormatHints() && bLAVInfoValid && lavPinInfo.pix_fmt != AV_PIX_FMT_NONE && codec != AV_CODEC_ID_FRAPS)
     {
         if (m_pAVCtx->pix_fmt != AV_PIX_FMT_DXVA2_VLD && m_pAVCtx->pix_fmt != AV_PIX_FMT_D3D11)
             m_pAVCtx->pix_fmt = lavPinInfo.pix_fmt;
@@ -1251,7 +1251,7 @@ send_packet:
             bDeliverFirst = TRUE;
         }
         else
-            return S_FALSE;
+            return HandleDecodeError(ret);
     }
     else
     {
@@ -1273,7 +1273,7 @@ send_packet:
         if (ret < 0 && ret != AVERROR(EAGAIN))
         {
             av_frame_unref(m_pFrame);
-            return S_FALSE;
+            return HandleDecodeError(ret);
         }
 
         // Judge frame usability
@@ -1394,7 +1394,7 @@ send_packet:
 
         pOutFrame->interlaced = ((m_pFrame->flags & AV_FRAME_FLAG_INTERLACED) || bAggressiveFlag ||
                                  m_pSettings->GetDeinterlacingMode() == DeintMode_Force) &&
-            !(m_pSettings->GetDeinterlacingMode() == DeintMode_Disable);
+            !(m_pSettings->GetDeinterlacingMode() == DeintMode_Disable) && !IsHardwareDeinterlaced();
 
         LAVDeintFieldOrder fo = m_pSettings->GetDeintFieldOrder();
         pOutFrame->tff =
@@ -1408,8 +1408,7 @@ send_packet:
         pOutFrame->sw_format = pOutFrame->format;
         pOutFrame->bpp = map.bpp;
 
-        if (m_nCodecId == AV_CODEC_ID_MPEG2VIDEO || m_nCodecId == AV_CODEC_ID_MPEG1VIDEO)
-            pOutFrame->avgFrameDuration = GetFrameDuration();
+        pOutFrame->avgFrameDuration = GetFrameAverageDuration();
 
         AVFrameSideData *sdHDR = av_frame_get_side_data(m_pFrame, AV_FRAME_DATA_MASTERING_DISPLAY_METADATA);
         if (sdHDR)
@@ -1503,7 +1502,13 @@ send_packet:
 
         if (map.conversion)
         {
-            ConvertPixFmt(m_pFrame, pOutFrame);
+            HRESULT hr = ConvertPixFmt(m_pFrame, pOutFrame);
+            if (FAILED(hr))
+            {
+                ReleaseFrame(&pOutFrame);
+                av_frame_unref(m_pFrame);
+                return hr;
+            }
         }
         else
         {
@@ -1649,13 +1654,16 @@ STDMETHODIMP CDecAvcodec::ConvertPixFmt(AVFrame *pFrame, LAVFrame *pOutFrame)
     m_pSwsContext = sws_getCachedContext(m_pSwsContext, pFrame->width, pFrame->height, (AVPixelFormat)pFrame->format,
                                          pFrame->width, pFrame->height, dstFormat,
                                          SWS_BILINEAR | SWS_FULL_CHR_H_INT | SWS_PRINT_INFO, nullptr, nullptr, nullptr);
+    if (!m_pSwsContext)
+        return E_FAIL;
 
     ptrdiff_t linesize[4];
     for (int i = 0; i < 4; i++)
         linesize[i] = pFrame->linesize[i];
 
     // Perform conversion
-    sws_scale2(m_pSwsContext, pFrame->data, linesize, 0, pFrame->height, pOutFrame->data, pOutFrame->stride);
+    if (sws_scale2(m_pSwsContext, pFrame->data, linesize, 0, pFrame->height, pOutFrame->data, pOutFrame->stride) < 0)
+        return E_FAIL;
 
     return S_OK;
 }
@@ -1669,6 +1677,11 @@ STDMETHODIMP_(REFERENCE_TIME) CDecAvcodec::GetFrameDuration()
         return (REF_SECOND_MULT * m_pAVCtx->time_base.num / m_pAVCtx->time_base.den) *
                ((m_pAVCtx->codec_descriptor && m_pAVCtx->codec_descriptor->props & AV_CODEC_PROP_FIELDS) ? 2 : 1);
     return 0;
+}
+
+REFERENCE_TIME CDecAvcodec::GetFrameAverageDuration()
+{
+    return (m_nCodecId == AV_CODEC_ID_MPEG2VIDEO || m_nCodecId == AV_CODEC_ID_MPEG1VIDEO) ? GetFrameDuration() : 0;
 }
 
 STDMETHODIMP_(BOOL) CDecAvcodec::IsInterlaced(BOOL bAllowGuess)

@@ -139,6 +139,48 @@ version is used, which is also linked as a Git submodule.
 You can get find the custom version of libbluray here:
 https://gitea.1f0.de/LAV/libbluray
 
+NVIDIA CUVID (FFmpeg)
+-----------------------------
+Select `NVIDIA CUVID (FFmpeg)` in LAV Video's hardware decoder list to use
+FFmpeg's CUVID decoders. `NVIDIA CUVID (old)` remains available with its existing
+implementation and settings. The new backend copies decoded frames to system
+memory for the normal DirectShow output and pixel conversion path.
+
+The existing hardware codec switches apply to H.264, HEVC, MPEG-1/2, MPEG-4,
+VC-1, VP9 and AV1. FFmpeg discovers the CUVID decoder by codec ID; unsupported
+codecs (including WMV3), DTS-only inputs such as MPEG-4 AVI, and unsupported GPU
+profiles fall back to software.
+CUDA devices can be selected independently for this backend. Hardware
+deinterlacing uses CUVID's adaptive mode with frame or field rate output.
+Deinterlacing mode, output cadence and field-order changes take effect during
+playback without resetting decode references. Forced deinterlacing and explicit
+field-order overrides are supported by the hardware display-processing path.
+When the bitstream omits frame-rate timing, a known container cadence provides
+the fallback. Auto mode preserves progressive pictures and soft-telecine repeat
+metadata; Force explicitly processes both fields when field-rate output is
+selected. Per-picture processing state prevents queued hardware output from
+being deinterlaced again after switching to software processing. Pending software
+filter frames are drained before switching to hardware processing, so switching
+back does not reuse old timestamps. Unavailable saved CUDA device indices use
+Automatic selection.
+
+Both FFmpeg build scripts enable CUDA/CUVID/NVDEC using the pinned SDK 13.0
+headers in `thirdparty/nv-codec-headers`. No CUDA Toolkit is required to build
+or run the decoder. Both scripts also apply the local
+[CUVID patches](thirdparty/ffmpeg-patches/README.md), which preserve field-rate
+output timing after repeated sequence headers and seeks and support live
+deinterlacing changes for this backend.
+The GCC build preserves matching DLL/PDB pairs in both Release and Debug. Its
+cv2pdb step restores GNU long section names and verifies that runtime section
+addresses and bytes have not changed.
+NVIDIA's driver must provide the CUDA and CUVID APIs;
+the bundled headers document Windows driver 570 or newer. Actual codec,
+chroma, bit depth and resolution support depends on the GPU. In particular,
+the 4:2:2 10-bit path requires a GPU that supports it.
+
+See [the CUVID regression tests](tests/cuvid-ffmpeg/README.md) for GPU decoding,
+software fallback, timestamps, deinterlacing and seek validation.
+
 Experimental AVS software decoding
 -----------------------------
 The x64 and x86 AVS builds support AVS1 JiZhun through FFmpeg's native CAVS decoder,

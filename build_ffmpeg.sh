@@ -41,13 +41,12 @@ copy_libs() (
     file_basename=$(basename $file)
     file_pdb=$(basename $file .dll).pdb
     ${CV2PDB} -p${file_pdb} ${file} ../bin_${archdir}d/${file_basename} || exit 1
-    if $enable_avs && [ "${arch}" == "x86" ]; then
-      # cv2pdb drops the COFF string table needed by long x86 section names.
-      # Strip DWARF from the original image for Release; retain the PDB build above.
-      objcopy --strip-debug ${file} ../bin_${archdir}/${file_basename} || exit 1
-    else
-      cp ../bin_${archdir}d/${file_basename} ../bin_${archdir}/ || exit 1
-    fi
+    # Restore cv2pdb's omitted long-section-name table and verify runtime RVAs/bytes.
+    # Both configurations then retain the CodeView identity matching this PDB.
+    powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass \
+      -File ../thirdparty/contrib/repair-cv2pdb.ps1 \
+      -Original "${file}" -Converted "../bin_${archdir}d/${file_basename}" || exit 1
+    cp ../bin_${archdir}d/${file_basename} ../bin_${archdir}/ || exit 1
     cp ../bin_${archdir}d/${file_pdb} ../bin_${archdir}/ || exit 1
   done
 
@@ -58,6 +57,20 @@ copy_libs() (
 
 clean() (
   make distclean > /dev/null 2>&1
+)
+
+apply_patches() (
+  ffmpeg_patch="../thirdparty/ffmpeg-patches/cuvid-sequence-framerate.patch"
+  if git apply --ignore-space-change --check "$ffmpeg_patch" > /dev/null 2>&1 ; then
+    echo "Applying CUVID sequence framerate patch..."
+    git apply --ignore-space-change "$ffmpeg_patch" || exit 1
+  elif git apply --ignore-space-change --reverse --check "$ffmpeg_patch" > /dev/null 2>&1 ; then
+    echo "CUVID sequence framerate patch is already applied."
+  else
+    echo "ERROR: CUVID sequence framerate patch does not match this FFmpeg source." >&2
+    git apply --ignore-space-change --check "$ffmpeg_patch" >&2
+    exit 1
+  fi
 )
 
 configure() (
@@ -75,7 +88,7 @@ configure() (
     --disable-muxers                \
     --enable-muxer=spdif            \
     --disable-bsfs                  \
-    --enable-bsf=extract_extradata,dovi_split \
+    --enable-bsf=extract_extradata,dovi_split,h264_mp4toannexb,hevc_mp4toannexb \
     --disable-avdevice              \
     --disable-encoders              \
     --disable-devices               \
@@ -83,6 +96,10 @@ configure() (
     --disable-debug                 \
     --disable-doc                   \
     --enable-avisynth               \
+    --enable-ffnvcodec              \
+    --enable-cuda                   \
+    --enable-cuvid                  \
+    --enable-nvdec                  \
     --enable-bzlib                  \
     --enable-d3d11va                \
     --enable-dxva2                  \
@@ -105,14 +122,17 @@ configure() (
   EXTRA_CFLAGS="-fno-tree-vectorize -D_WIN32_WINNT=0x0601 -DWINVER=0x0601 -gdwarf-5"
   EXTRA_LDFLAGS=""
   PKG_CONFIG_PREFIX_DIR=""
+  # Absolute paths let MSYS convert the search list for native Windows pkg-config.
+  NV_CODEC_PKG_CONFIG_PATH="$(cd ../thirdparty/nv-codec-headers/lib/pkgconfig && pwd)" || exit 1
+  export PKG_CONFIG_PATH="${NV_CODEC_PKG_CONFIG_PATH}${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
   if [ "${arch}" == "x86_64" ]; then
-    export PKG_CONFIG_PATH="$PKG_CONFIG_PATH:../thirdparty/64/lib/pkgconfig/"
+    export PKG_CONFIG_PATH="$PKG_CONFIG_PATH:$(cd ../thirdparty/64/lib/pkgconfig && pwd)"
     OPTIONS="${OPTIONS} --enable-cross-compile --cross-prefix=${cross_prefix} --target-os=mingw32 --pkg-config=pkg-config"
     EXTRA_CFLAGS="${EXTRA_CFLAGS} -I../thirdparty/64/include -fno-omit-frame-pointer"
     EXTRA_LDFLAGS="${EXTRA_LDFLAGS} -L../thirdparty/64/lib"
     PKG_CONFIG_PREFIX_DIR="--define-variable=prefix=../thirdparty/64"
   else
-    export PKG_CONFIG_PATH="$PKG_CONFIG_PATH:../thirdparty/32/lib/pkgconfig/"
+    export PKG_CONFIG_PATH="$PKG_CONFIG_PATH:$(cd ../thirdparty/32/lib/pkgconfig && pwd)"
     OPTIONS="${OPTIONS} --cpu=i686"
     EXTRA_CFLAGS="${EXTRA_CFLAGS} -I../thirdparty/32/include -mmmx -msse -msse2 -mfpmath=sse -mstackrealign"
     EXTRA_LDFLAGS="${EXTRA_LDFLAGS} -L../thirdparty/32/lib"
@@ -132,7 +152,9 @@ echo
 echo Building ffmpeg in GCC ${arch} Release config...
 echo
 
-cd ffmpeg
+cd ffmpeg || exit 1
+
+apply_patches || exit 1
 
 if $clean_build ; then
     clean

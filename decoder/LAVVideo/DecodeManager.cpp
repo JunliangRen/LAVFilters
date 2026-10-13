@@ -66,6 +66,8 @@ ILAVDecoder *CDecodeManager::CreateHWAccelDecoder(LAVHWAccel hwAccel)
     ILAVDecoder *pDecoder = nullptr;
     if (hwAccel == HWAccel_CUDA)
         pDecoder = CreateDecoderCUVID();
+    else if (hwAccel == HWAccel_CUVIDFFmpeg)
+        pDecoder = CreateDecoderCUVIDFFmpeg();
     else if (hwAccel == HWAccel_QuickSync)
         pDecoder = CreateDecoderQuickSync();
     else if (hwAccel == HWAccel_DXVA2CopyBack)
