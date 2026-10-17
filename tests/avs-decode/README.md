@@ -69,4 +69,89 @@ tests\avs-decode\validate-8k.ps1 -Platform x86 -Package F:\Repos\LAVFilters\bin_
 
 Use x64 and its matching paths for x64 testing. The graph helper accepts optional `[TIMEOUT_MS]` after its output format; the 8K wrapper uses 600000 per segment so low-thread decoding and pixel hashing have time to complete. Core checks retain the default 120000. `-ExistingGraphReport` can re-evaluate a saved, hash-bound graph against a newly completed standalone reference without modifying the original report or rerunning decoding.
 
-Small-fixture x86 success is separate from actual 8K usability. One decoder thread is used for the actual prefix; the previous native measurements were about 884 MiB at one thread and near 4 GiB with automatic 20-thread decoding. Those older measurements are context, not a benchmark of the current candidate. Do not infer default-auto-thread 8K playback from low-resolution core results. The short-prefix tests do not establish 50 fps real-time performance, sustained full-recording playback, renderer behavior, or audio/video sync. AVS+, AVS2 10-bit, other AVS3 profiles, changing resolution, missing headers, arbitrary damaged-input recovery, hardware decoding, and other containers remain outside this suite.
+Small-fixture x86 success is separate from actual 8K usability. One decoder thread is used for the actual prefix; the previous native measurements were about 884 MiB at one thread and near 4 GiB with automatic 20-thread decoding. Those older measurements are context, not a benchmark of the current candidate. Do not infer default-auto-thread 8K playback from low-resolution core results. The short-prefix tests do not establish 50 fps real-time performance, sustained full-recording playback, renderer behavior, or audio/video sync. AVS+, other AVS3 profiles, missing headers, arbitrary damaged-input recovery, hardware decoding, and other containers remain outside this suite. AVS2 10-bit uses the separate targeted check below.
+
+## AVS2 10-bit targeted broadcast and instance checks
+
+`build.cmd` also builds `codec-instances-{arch}.exe`. This helper loads the candidate FFmpeg DLLs and explicitly opens `libdavs2`; it never registers filters or changes settings. Inputs must be bounded AVS2 fixtures: each is limited to 128 MiB of video packet data and 8192 packets. The supplied prefix ending at a complete GOP and PES boundary in the Guangdong TV recording and the existing official AVS2 8-bit fixture are suitable inputs. Keep the original recording read-only; do not pass the entire recording to the full-fixture graph helper.
+
+```powershell
+tests\avs-decode\validate-avs2-10bit.ps1 -Platform x64 -Package F:\Repos\LAVFilters\bin_build\avs2-10bit-20261018\x64\candidate -Fixture F:\Repos\LAVFilters\bin_build\avs2-10bit-20261018\fixtures\tail-boundary\gdtv-before-seq-350.ts -ReferenceReport F:\Repos\LAVFilters\bin_build\avs2-10bit-20261018\fixtures\tail-boundary\reference-before-350.json -HarnessDirectory F:\Repos\LAVFilters\bin_build\avs2-10bit-20261018\tests\x64 -OutputDirectory F:\Repos\LAVFilters\bin_build\avs2-10bit-20261018\x64\avs2-10bit-new
+```
+
+The final unchanged TS prefix ends immediately before the next sequence header:
+350 video PES packets, 32,039,336 bytes, SHA256
+`365182ec54f6219b0fb5389bb1e0d04fe71ad8243e442a14df86836bc45f6774`.
+Its separate scalar decoder reference contains 350 frames, MD5
+`ee75d71a8b347992fb4afa73a8d491ca`. That decoder uses the same source family;
+this is an independent build and scalar path, not an independent codec algorithm.
+Arbitrary PES cuts can leave incomplete pictures; retain the extraction boundary
+and reference provenance rather than accepting a candidate-generated oracle.
+
+Use x86 and its matching candidate and helpers for x86. `-Threads` defaults to one and two decoder threads. `-InstancesThreads` defaults to two; neither setting claims default-auto-thread memory or performance. Use a fresh output directory. The independent reference JSON must contain `fixture_sha256`, `bits` (10), `width`, `height`, `frames`, canonical planar `md5`, ordered `frame_sha256`, `reference` provenance, and `limits`. An optional `frame_rate` also checks sample durations. Generate the pixel oracle through a separate standalone decoder build, retaining its revision, executable/source hashes, input ES/prefix hashes, and output format. Do not derive a new oracle from the candidate under test.
+
+Complete-prefix whole and replay decoding is clean. Artificial forward-seek stop
+boundaries can produce decoder errors during preroll beyond the delivered
+segment. The checks still require every delivered frame and timestamp to match
+the whole capture; passing them does not establish arbitrary-cut recovery.
+
+The existing graph helper checks P010 output against that independent yuv420p10le reference, retains nonzero luma low-bit counts, and exercises whole-fixture EOS, forward/backward/repeated seek, and replay. The unchanged broadcast TS can start after zero because its audio/video offsets are preserved; this check compares seek output to the whole capture's absolute times rather than requiring a rewritten zero-based timeline.
+
+The direct API helper runs sixteen cases: independent 8-bit and 10-bit baselines; two simultaneously live contexts with interleaved packets; two contexts decoding in parallel host threads; the same context switched 8-to-10-to-8 and 10-to-8-to-10 with flush between each input; both sequences again without flush so old delayed frames must be drained before switching; and partial input discarded by flush followed by full replay for each depth. It compares dimensions, bit depth, PTS, duration, ordered canonical SHA256, cumulative bytes, and luma precision counts to the baselines. The wrapper also compares 10-bit baseline pixels to the independent oracle and 8-bit baseline pixels to the existing unchanged official oracle. The no-flush sequence tests intentionally concatenate fixture timelines; they test decoder state and do not imply a continuous broadcast timestamp sequence.
+
+The wrapper also launches `codec-instances-{arch}.exe --cold-8 PACKAGE AVS2_8.ts OUTPUT.json THREADS` and the corresponding `--cold-10` mode in separate fresh processes. Each demuxes packets without `avformat_find_stream_info`, since stream probing can decode and warm the library before the test. Two contexts synchronize immediately before their first packet, then decode concurrently using the same depth. A third decode afterwards supplies a warm baseline. All six outputs must match the applicable independent pixel oracle. This checks the deferred backend initialization path, including its shared primitive-table initialization, without relying on a warmed mixed-depth test.
+
+`avs2-10bit-validation.json` binds fixture, candidate, helper, and reference hashes. Logs and raw graph/API reports are retained. Run the separate unchanged core `validate.ps1` suite as well to cover AVS1, AVS2 8-bit, AVS3 8/10-bit, and stride fixtures. Short-prefix success establishes the tested software decode and seek behavior; it does not establish full-recording playback, rendering, audio/video synchronization, default-thread resource use, or real-time 4K50 decoding.
+
+## Standalone AVS2 seek metadata checks
+
+`seek-parser.cpp` exercises the bounded seek preflight header without FFmpeg,
+DirectShow, external media, or decoder initialization. From a Visual Studio
+Native Tools prompt at the repository root:
+
+```bat
+if not exist bin_build mkdir bin_build
+cl /nologo /EHsc /W4 /std:c++14 /MT /O2 tests\avs-decode\seek-parser.cpp /Fe:bin_build\seek-parser.exe /Fo:bin_build\seek-parser.obj
+bin_build\seek-parser.exe
+```
+
+The synthetic cases cover valid SPS-selected and inline RPS headers, AVS2
+pseudo-code removal, cached sequence state, truncated headers, invalid markers
+and indices, bounded Exp-Golomb values, unsupported background/field sequences,
+and packet bounds. Closure checks require 64 validated coded pictures and
+exercise COI wrap. A fresh sequence with a zero-reference ordinary I may restart
+COI; subsequent references must stay within that new sequence. Unqualified gaps,
+duplicate COIs, missing references and geometry changes are rejected. Success
+exits zero; any failed check exits nonzero. These are metadata
+and reference-closure checks, not pixel decoding or full-recording seek proof.
+## Live AVS2 seek with audio
+
+`seek-av-probe-{arch}.exe` loads the matching package's Splitter, Video and Audio
+without registration. It uses software video decoding with P010 output and PCM
+audio, runtime-only settings, and a shared system clock when `clocked` is selected.
+The `live` mode calls `SetPositions` while the same graph is running, without
+Stop/Pause or an artificial short stop. This covers the seekbar path missed by
+the whole-fixture graph helper. Each requested point must produce at least ten
+video frames and ten PCM chunks. The JSON retains their timestamps and canonical
+P010 SHA256; stdout includes first-output latency, flushes and read counts.
+
+```bat
+seek-av-probe-x64.exe PACKAGE INPUT.ts reference 0 fast warm.json 5 30
+seek-av-probe-x64.exe PACKAGE INPUT.ts live 0 clocked live.json 5 30
+```
+
+Use x86 with a matching package and helper. In the live report, compare each
+phase's ten video hashes with the uninterrupted reference at the same
+`absolute_start`; relative post-seek times alone are insufficient. Check that
+both streams resume and their timestamps advance. Audio samples are counted and
+timed, not hashed. An optional second target is accepted. A reference run must
+finish within 60 seconds, a live seek within 45 seconds, and the process watchdog
+terminates the helper after 110 seconds. Use bounded nearby targets for the
+continuous reference; do not attempt to decode an hours-long recording to EOS.
+
+The local AVS2 seek path verifies the first picture following a sequence header,
+then a closure of 64 coding-order pictures and the remainder of the target
+window. Metadata inspection has time, byte and packet limits. Unsupported or
+uncertified entries use the compatibility replay path. This probe checks output
+and shared-clock scheduling; it does not exercise a player's renderer, audio
+device, lip sync, or sustained real-time 4K playback.

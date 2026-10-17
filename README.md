@@ -187,8 +187,8 @@ software fallback, timestamps, deinterlacing and seek validation.
 Experimental AVS software decoding
 -----------------------------
 The x64 and x86 AVS builds support AVS1 JiZhun through FFmpeg's native CAVS decoder,
-AVS2 8-bit through davs2, and AVS3 baseline 8/10-bit through uavs3d.
-AVS+ and AVS2 10-bit require further backend work and are outside this preview.
+AVS2 8/10-bit through isolated davs2 backends, and AVS3 baseline 8/10-bit
+through uavs3d. AVS+ remains outside this preview.
 
 From an MSYS2 MinGW shell matching the target architecture, with the existing
 FFmpeg dependencies installed:
@@ -205,9 +205,11 @@ bash -o igncr thirdparty/build_avs.sh x86
 bash -o igncr build_ffmpeg.sh x86 avs
 ```
 
-The dependency script uses the official source revisions in
+The dependency script uses the fixed source revisions in
 `thirdparty/avs-versions.txt` and builds static libraries, including uavs3d's
-10-bit mode. The `avs` argument opts into the two external decoders; the regular
+10-bit mode. AVS2 uses separate 8-bit and fixed-depth 10-bit archives to isolate
+per-instance pixel state; see [dependency provenance](thirdparty/README.avs.md).
+The `avs` argument opts into the two external decoders; the regular
 FFmpeg build does not require these extra dependencies. Then build the matching
 Release LAVFilters solution: x64 for the 64-bit build, or Win32 for the 32-bit
 build. Keep each architecture's AX files and runtime DLLs together and use a
@@ -217,9 +219,10 @@ player with the same bitness. Prefer a 64-bit player for 8K inputs because the
 The codec settings appear as AVS1 (Chinese AVS), AVS2, and AVS3. This support
 uses software decoding. See [the AVS regression tests](tests/avs-decode/README.md)
 for fixture provenance and the tested decoding, pixel, timestamp, and seek paths.
-For local seekable MPEG-TS files, this preview restores AVS reference pictures
-by decoding from the beginning on seek. Seeking late in a long file can be slow;
-a real AVS keyframe index is a follow-up optimization.
+For local seekable AVS2 MPEG-TS files, seeks inspect a bounded region near the
+requested time and start from a sequence with verified reference-picture closure.
+Unsupported entry patterns retain the compatibility replay path. AVS1 and AVS3
+still decode from the beginning on seek, so late seeks in those files can be slow.
 
 Feedback
 -----------------------------
