@@ -1,7 +1,7 @@
 [submodule "ffmpeg"]
 	path = ffmpeg
 	url = https://github.com/JunliangRen/FFmpeg.git
-	branch = codex/cuvid-live-deinterlace
+	branch = avs2-10bit
 [submodule "libbluray"]
 	path = libbluray
 	url = https://gitea.1f0.de/LAV/libbluray.git

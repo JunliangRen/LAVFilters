@@ -1,3 +1,6 @@
-# Fixed official decoder sources for the opt-in x64/x86 AVS builds.
-DAVS2_REVISION=b41cf117452e2d73d827f02d3e30aa20f1c721ac
+# Fixed decoder sources for the opt-in x64/x86 AVS builds.
+DAVS2_8BIT_REPOSITORY=https://github.com/pkuvcl/davs2.git
+DAVS2_8BIT_REVISION=b41cf117452e2d73d827f02d3e30aa20f1c721ac
+DAVS2_10BIT_REPOSITORY=https://github.com/xatabhk/davs2-10bit.git
+DAVS2_10BIT_REVISION=21d64c8f8e36af71fc7a488cd6f789c86cdd1200
 UAVS3D_REVISION=0e20d2c291853f196c68922a264bcd8471d75b68
