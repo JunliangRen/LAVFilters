@@ -110,6 +110,7 @@ DirectShow, external media, or decoder initialization. From a Visual Studio
 Native Tools prompt at the repository root:
 
 ```bat
+if not exist bin_build mkdir bin_build
 cl /nologo /EHsc /W4 /std:c++14 /MT /O2 tests\avs-decode\seek-parser.cpp /Fe:bin_build\seek-parser.exe /Fo:bin_build\seek-parser.obj
 bin_build\seek-parser.exe
 ```
