@@ -102,3 +102,53 @@ The direct API helper runs sixteen cases: independent 8-bit and 10-bit baselines
 The wrapper also launches `codec-instances-{arch}.exe --cold-8 PACKAGE AVS2_8.ts OUTPUT.json THREADS` and the corresponding `--cold-10` mode in separate fresh processes. Each demuxes packets without `avformat_find_stream_info`, since stream probing can decode and warm the library before the test. Two contexts synchronize immediately before their first packet, then decode concurrently using the same depth. A third decode afterwards supplies a warm baseline. All six outputs must match the applicable independent pixel oracle. This checks the deferred backend initialization path, including its shared primitive-table initialization, without relying on a warmed mixed-depth test.
 
 `avs2-10bit-validation.json` binds fixture, candidate, helper, and reference hashes. Logs and raw graph/API reports are retained. Run the separate unchanged core `validate.ps1` suite as well to cover AVS1, AVS2 8-bit, AVS3 8/10-bit, and stride fixtures. Short-prefix success establishes the tested software decode and seek behavior; it does not establish full-recording playback, rendering, audio/video synchronization, default-thread resource use, or real-time 4K50 decoding.
+
+## Standalone AVS2 seek metadata checks
+
+`seek-parser.cpp` exercises the bounded seek preflight header without FFmpeg,
+DirectShow, external media, or decoder initialization. From a Visual Studio
+Native Tools prompt at the repository root:
+
+```bat
+cl /nologo /EHsc /W4 /std:c++14 /MT /O2 tests\avs-decode\seek-parser.cpp /Fe:bin_build\seek-parser.exe /Fo:bin_build\seek-parser.obj
+bin_build\seek-parser.exe
+```
+
+The synthetic cases cover valid SPS-selected and inline RPS headers, AVS2
+pseudo-code removal, cached sequence state, truncated headers, invalid markers
+and indices, bounded Exp-Golomb values, unsupported background/field sequences,
+and packet bounds. Closure checks require 64 consecutive coded pictures,
+exercise COI wrap, and reject gaps, self/pre-entry references, and geometry
+changes. Success exits zero; any failed check exits nonzero. These are metadata
+and reference-closure checks, not pixel decoding or full-recording seek proof.
+## Live AVS2 seek with audio
+
+`seek-av-probe-{arch}.exe` loads the matching package's Splitter, Video and Audio
+without registration. It uses software video decoding with P010 output and PCM
+audio, runtime-only settings, and a shared system clock when `clocked` is selected.
+The `live` mode calls `SetPositions` while the same graph is running, without
+Stop/Pause or an artificial short stop. This covers the seekbar path missed by
+the whole-fixture graph helper. Each requested point must produce at least ten
+video frames and ten PCM chunks. The JSON retains their timestamps and canonical
+P010 SHA256; stdout includes first-output latency, flushes and read counts.
+
+```bat
+seek-av-probe-x64.exe PACKAGE INPUT.ts reference 0 fast warm.json 5 30
+seek-av-probe-x64.exe PACKAGE INPUT.ts live 0 clocked live.json 5 30
+```
+
+Use x86 with a matching package and helper. In the live report, compare each
+phase's ten video hashes with the uninterrupted reference at the same
+`absolute_start`; relative post-seek times alone are insufficient. Check that
+both streams resume and their timestamps advance. Audio samples are counted and
+timed, not hashed. An optional second target is accepted. A reference run must
+finish within 60 seconds, a live seek within 45 seconds, and the process watchdog
+terminates the helper after 110 seconds. Use bounded nearby targets for the
+continuous reference; do not attempt to decode an hours-long recording to EOS.
+
+The local AVS2 seek path verifies the first picture following a sequence header,
+then a closure of 64 coding-order pictures and the remainder of the target
+window. Metadata inspection has time, byte and packet limits. Unsupported or
+uncertified entries use the compatibility replay path. This probe checks output
+and shared-clock scheduling; it does not exercise a player's renderer, audio
+device, lip sync, or sustained real-time 4K playback.

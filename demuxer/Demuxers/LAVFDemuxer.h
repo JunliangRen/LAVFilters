@@ -177,6 +177,8 @@ class CLAVFDemuxer
     void UpdateParserFlags(AVStream *st);
 
     void FlushOnSeek();
+    HRESULT SeekAVS2(REFERENCE_TIME rTime, int streamId);
+    HRESULT SeekAVS2Byte(int64_t position);
 
     REFERENCE_TIME ConvertTimestampToRT(int64_t pts, int num, int den,
                                         int64_t starttime = (int64_t)AV_NOPTS_VALUE) const;
@@ -250,6 +252,8 @@ class CLAVFDemuxer
     time_t m_timeAbort = 0;
     time_t m_timeOpening = 0;
     time_t m_timePacketRead = 0;
+    ULONGLONG m_avs2SeekDeadline = 0;
+    int64_t m_avs2SeekReadLimit = 0;
 
     struct
     {
