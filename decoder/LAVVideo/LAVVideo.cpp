@@ -174,6 +174,8 @@ HRESULT CLAVVideo::LoadDefaults()
     m_settings.HWAccelDeviceD3D11 = LAVHWACCEL_DEVICE_DEFAULT;
     m_settings.HWAccelDeviceD3D11Desc = 0;
 
+    m_settings.HWAccelDeviceCUVIDFFmpeg = LAVHWACCEL_DEVICE_DEFAULT;
+
     m_settings.bH264MVCOverride = TRUE;
     m_settings.bCCOutputPinEnabled = FALSE;
 
@@ -354,6 +356,10 @@ HRESULT CLAVVideo::ReadSettings(HKEY rootKey)
         if (SUCCEEDED(hr))
             m_settings.HWAccelDeviceD3D11Desc = dwVal;
 
+        dwVal = regHW.ReadDWORD(L"HWAccelDeviceCUVIDFFmpeg", hr);
+        if (SUCCEEDED(hr))
+            m_settings.HWAccelDeviceCUVIDFFmpeg = dwVal;
+
         bFlag = regHW.ReadBOOL(L"HWAccelCUVIDXVA", hr);
         if (SUCCEEDED(hr))
             m_settings.HWAccelCUVIDXVA = bFlag;
@@ -420,6 +426,8 @@ HRESULT CLAVVideo::SaveSettings()
 
         regHW.WriteDWORD(L"HWAccelDeviceD3D11", m_settings.HWAccelDeviceD3D11);
         regHW.WriteDWORD(L"HWAccelDeviceD3D11Desc", m_settings.HWAccelDeviceD3D11Desc);
+
+        regHW.WriteDWORD(L"HWAccelDeviceCUVIDFFmpeg", m_settings.HWAccelDeviceCUVIDFFmpeg);
 
         regHW.WriteBOOL(L"HWAccelCUVIDXVA", m_settings.HWAccelCUVIDXVA);
 
@@ -1967,13 +1975,27 @@ STDMETHODIMP CLAVVideo::Deliver(LAVFrame *pFrame)
         !(m_Decoder.IsInterlaced(FALSE) && m_settings.SWDeintMode != SWDeintMode_None) ||
         pFrame->flags & LAV_FRAME_FLAG_REDRAW)
     {
+        // Software deinterlacers retain pictures for their next-frame reference.
+        // Drain before bypassing them, including live changes to hardware output.
+        if (m_pFilterGraph)
+        {
+            HRESULT hr = Filter(GetFlushFrame());
+            if (FAILED(hr))
+            {
+                m_hrDeliver = hr;
+                ReleaseFrame(&pFrame);
+                return hr;
+            }
+        }
         return DeliverToRenderer(pFrame);
     }
     else
     {
-        Filter(pFrame);
+        HRESULT hr = Filter(pFrame);
+        if (FAILED(hr))
+            m_hrDeliver = hr;
+        return hr;
     }
-    return S_OK;
 }
 
 HRESULT CLAVVideo::DeliverToRenderer(LAVFrame *pFrame)
@@ -2971,6 +2993,16 @@ STDMETHODIMP_(DWORD) CLAVVideo::GetHWAccelDeviceIndex(LAVHWAccel hwAccel, DWORD 
 
         return dwDeviceIndex;
     }
+    else if (hwAccel == HWAccel_CUVIDFFmpeg)
+    {
+        if (pdwDeviceIdentifier)
+            *pdwDeviceIdentifier = 0;
+
+        DWORD dwDeviceIndex = m_settings.HWAccelDeviceCUVIDFFmpeg;
+        if (dwDeviceIndex != LAVHWACCEL_DEVICE_DEFAULT && dwDeviceIndex >= GetHWAccelNumDevices(hwAccel))
+            dwDeviceIndex = LAVHWACCEL_DEVICE_DEFAULT;
+        return dwDeviceIndex;
+    }
 
     if (pdwDeviceIdentifier)
         *pdwDeviceIdentifier = 0;
@@ -2992,6 +3024,9 @@ STDMETHODIMP CLAVVideo::SetHWAccelDeviceIndex(LAVHWAccel hwAccel, DWORD dwIndex,
         dwDeviceIdentifier = 0;
     }
 
+    if (hwAccel == HWAccel_CUVIDFFmpeg)
+        dwDeviceIdentifier = 0;
+
     if (dwIndex != LAVHWACCEL_DEVICE_DEFAULT && dwDeviceIdentifier == 0 && !skipinfo)
         hr = GetHWAccelDeviceInfo(hwAccel, dwIndex, nullptr, &dwDeviceIdentifier);
 
@@ -3006,6 +3041,10 @@ STDMETHODIMP CLAVVideo::SetHWAccelDeviceIndex(LAVHWAccel hwAccel, DWORD dwIndex,
         {
             m_settings.HWAccelDeviceD3D11 = dwIndex;
             m_settings.HWAccelDeviceD3D11Desc = dwDeviceIdentifier;
+        }
+        else if (hwAccel == HWAccel_CUVIDFFmpeg)
+        {
+            m_settings.HWAccelDeviceCUVIDFFmpeg = dwIndex;
         }
         return SaveSettings();
     }
