@@ -73,13 +73,27 @@ Small-fixture x86 success is separate from actual 8K usability. One decoder thre
 
 ## AVS2 10-bit targeted broadcast and instance checks
 
-`build.cmd` also builds `codec-instances-{arch}.exe`. This helper loads the candidate FFmpeg DLLs and explicitly opens `libdavs2`; it never registers filters or changes settings. Inputs must be bounded AVS2 fixtures: each is limited to 128 MiB of video packet data and 8192 packets. The supplied complete-PES prefix of the Guangdong TV recording and the existing official AVS2 8-bit fixture are suitable inputs. Keep the original recording read-only; do not pass the entire recording to the full-fixture graph helper.
+`build.cmd` also builds `codec-instances-{arch}.exe`. This helper loads the candidate FFmpeg DLLs and explicitly opens `libdavs2`; it never registers filters or changes settings. Inputs must be bounded AVS2 fixtures: each is limited to 128 MiB of video packet data and 8192 packets. The supplied prefix ending at a complete GOP and PES boundary in the Guangdong TV recording and the existing official AVS2 8-bit fixture are suitable inputs. Keep the original recording read-only; do not pass the entire recording to the full-fixture graph helper.
 
 ```powershell
-tests\avs-decode\validate-avs2-10bit.ps1 -Platform x64 -Package F:\Repos\LAVFilters\bin_build\avs2-10bit-20261018\candidate\x64 -Fixture F:\Repos\LAVFilters\bin_build\avs2-10bit-20261018\fixtures\gdtv-avs2-10bit-prefix.ts -ReferenceReport F:\Repos\LAVFilters\bin_build\avs2-10bit-20261018\fixtures\reference.json -HarnessDirectory F:\Repos\LAVFilters\bin_build\avs2-10bit-20261018\tests\x64 -OutputDirectory F:\Repos\LAVFilters\bin_build\avs2-10bit-20261018\validation\x64
+tests\avs-decode\validate-avs2-10bit.ps1 -Platform x64 -Package F:\Repos\LAVFilters\bin_build\avs2-10bit-20261018\x64\candidate -Fixture F:\Repos\LAVFilters\bin_build\avs2-10bit-20261018\fixtures\tail-boundary\gdtv-before-seq-350.ts -ReferenceReport F:\Repos\LAVFilters\bin_build\avs2-10bit-20261018\fixtures\tail-boundary\reference-before-350.json -HarnessDirectory F:\Repos\LAVFilters\bin_build\avs2-10bit-20261018\tests\x64 -OutputDirectory F:\Repos\LAVFilters\bin_build\avs2-10bit-20261018\x64\avs2-10bit-new
 ```
 
+The final unchanged TS prefix ends immediately before the next sequence header:
+350 video PES packets, 32,039,336 bytes, SHA256
+`365182ec54f6219b0fb5389bb1e0d04fe71ad8243e442a14df86836bc45f6774`.
+Its separate scalar decoder reference contains 350 frames, MD5
+`ee75d71a8b347992fb4afa73a8d491ca`. That decoder uses the same source family;
+this is an independent build and scalar path, not an independent codec algorithm.
+Arbitrary PES cuts can leave incomplete pictures; retain the extraction boundary
+and reference provenance rather than accepting a candidate-generated oracle.
+
 Use x86 and its matching candidate and helpers for x86. `-Threads` defaults to one and two decoder threads. `-InstancesThreads` defaults to two; neither setting claims default-auto-thread memory or performance. Use a fresh output directory. The independent reference JSON must contain `fixture_sha256`, `bits` (10), `width`, `height`, `frames`, canonical planar `md5`, ordered `frame_sha256`, `reference` provenance, and `limits`. An optional `frame_rate` also checks sample durations. Generate the pixel oracle through a separate standalone decoder build, retaining its revision, executable/source hashes, input ES/prefix hashes, and output format. Do not derive a new oracle from the candidate under test.
+
+Complete-prefix whole and replay decoding is clean. Artificial forward-seek stop
+boundaries can produce decoder errors during preroll beyond the delivered
+segment. The checks still require every delivered frame and timestamp to match
+the whole capture; passing them does not establish arbitrary-cut recovery.
 
 The existing graph helper checks P010 output against that independent yuv420p10le reference, retains nonzero luma low-bit counts, and exercises whole-fixture EOS, forward/backward/repeated seek, and replay. The unchanged broadcast TS can start after zero because its audio/video offsets are preserved; this check compares seek output to the whole capture's absolute times rather than requiring a rewritten zero-based timeline.
 
