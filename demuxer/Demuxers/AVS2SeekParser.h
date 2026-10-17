@@ -255,14 +255,14 @@ class AVS2SeekParser
 class AVS2SeekClosure
 {
   public:
-    void Reset() { m_valid = false; m_count = 0; m_previous = 0; }
+    void Reset() { m_valid = false; m_count = m_epochCount = 0; m_previous = 0; }
     bool Begin(const AVS2SeekParser::Picture &picture)
     {
         Reset();
         if (!picture.valid || !picture.hasPicture || !picture.restartCandidate || !picture.ordinaryI ||
             !picture.backgroundDisabled || picture.refCount != 0) return false;
         m_valid = true;
-        m_count = 1;
+        m_count = m_epochCount = 1;
         m_previous = picture.coi;
         m_sequenceTag = picture.sequenceTag;
         return true;
@@ -272,11 +272,26 @@ class AVS2SeekClosure
         if (!m_valid || !picture.valid || !picture.backgroundDisabled || picture.refCount > 4) { Reset(); return false; }
         if (!picture.hasPicture) return true;
         if (picture.sequenceTag != m_sequenceTag) { Reset(); return false; }
-        if (picture.coi != static_cast<uint8_t>(m_previous + 1)) { Reset(); return false; }
+        if (picture.coi != static_cast<uint8_t>(m_previous + 1))
+        {
+            // Some encoders restart COI at each short independent sequence. davs2
+            // advances its absolute epoch on a decrease; duplicate COIs do not.
+            // Only a fresh sequence and zero-reference ordinary I can bridge a
+            // gap. References after it must stay inside this new epoch, rather
+            // than using the total number of pictures already validated.
+            if (picture.coi == m_previous || !picture.hasSequence || !picture.intra ||
+                !picture.ordinaryI || !picture.restartCandidate || picture.refCount != 0)
+            {
+                Reset();
+                return false;
+            }
+            m_epochCount = 0;
+        }
         for (unsigned i = 0; i < picture.refCount; ++i)
-            if (!picture.refDeltas[i] || picture.refDeltas[i] > m_count) { Reset(); return false; }
+            if (!picture.refDeltas[i] || picture.refDeltas[i] > m_epochCount) { Reset(); return false; }
         m_previous = picture.coi;
         if (m_count < 64) ++m_count;
+        if (m_epochCount < 64) ++m_epochCount;
         return true;
     }
     bool Certified() const { return m_valid && m_count >= 64; }
@@ -284,7 +299,7 @@ class AVS2SeekClosure
 
   private:
     bool m_valid = false;
-    unsigned m_count = 0;
+    unsigned m_count = 0, m_epochCount = 0;
     uint8_t m_previous = 0;
     uint64_t m_sequenceTag = 0;
 };

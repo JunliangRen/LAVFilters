@@ -189,13 +189,52 @@ int main()
     Check(consecutive && closure.Certified(), "COI 255-to-0 wrap remains consecutive");
     Parse(packet); closure.Begin(p); p.coi = 27; p.refCount = 1; p.refDeltas[0] = 2;
     Check(!closure.Add(p) && !closure.Certified(), "pre-entry reference invalidates closure");
-    Parse(packet); closure.Begin(p); p.coi = 28;
+    Parse(packet); closure.Begin(p); p.coi = 28; p.hasSequence = false;
     Check(!closure.Add(p), "COI gap invalidates closure");
     Parse(packet); closure.Begin(p); p.coi = 27; p.refCount = 1; p.refDeltas[0] = 0;
     Check(!closure.Add(p), "self-reference invalidates closure");
     Parse(packet); closure.Begin(p);
     Check(Parse(Packet(Sequence(false, false, 1, false, 1920), Picture(27, false, {1}, -1), 0xb6)) &&
               !closure.Add(p), "geometry change invalidates closure");
+
+    const auto ShortEpoch = [&](unsigned count)
+    {
+        Parse(Packet(sequence, Picture(0))); closure.Begin(p);
+        bool valid = true;
+        for (unsigned i = 1; i < count; ++i)
+        {
+            const unsigned coi = i % 24;
+            const auto bytes = coi == 0 ? Packet(sequence, Picture(0)) :
+                                         Packet({}, Picture(coi, false, {1}, -1), 0xb6);
+            if (!Parse(bytes) || !closure.Add(p)) valid = false;
+        }
+        return valid;
+    };
+    Check(ShortEpoch(64) && closure.Certified() && closure.Count() == 64,
+          "64 actual pictures certify across independent 24-picture COI epochs");
+    Check(ShortEpoch(80) && closure.Certified(), "qualified late epoch preserves certification");
+    Check(ShortEpoch(24), "prepare short independent epoch");
+    Parse(Packet({}, Picture(0)));
+    Check(!closure.Add(p), "COI reset without fresh B0 rejected");
+    ShortEpoch(24); Parse(Packet(sequence, Picture(0, false, {1}, -1), 0xb6));
+    Check(!closure.Add(p), "dependent inter picture cannot bridge COI gap");
+    ShortEpoch(24); Parse(Packet(sequence, Picture(0, true, {1}, -1)));
+    Check(!closure.Add(p), "intra picture with references cannot bridge COI gap");
+    ShortEpoch(24); Parse(Packet(sequence, Picture(0))); p.intra = false;
+    Check(!closure.Add(p), "inconsistent ordinary-I flag cannot bridge COI gap");
+    ShortEpoch(24); Parse(Packet(sequence, Picture(0)));
+    Check(closure.Add(p), "fresh zero-reference ordinary I starts new reference epoch");
+    Parse(Packet({}, Picture(1, false, {2}, -1), 0xb6));
+    Check(!closure.Add(p), "reference into skipped epoch hole rejected despite total history");
+    ShortEpoch(24); Parse(Packet(sequence, Picture(0))); closure.Add(p);
+    Parse(Packet({}, Picture(1, false, {1}, -1), 0xb6));
+    Check(closure.Add(p), "reference to new epoch I accepted");
+    ShortEpoch(64); Parse(Packet({}, Picture(17, false, {1}, -1), 0xb6));
+    Check(!closure.Add(p) && !closure.Certified(), "unqualified late gap revokes certification");
+    ShortEpoch(24); Parse(Packet(sequence, Picture(23)));
+    Check(!closure.Add(p), "duplicate COI rejected even with fresh independent I");
+    ShortEpoch(24); Parse(Packet(sequence, Picture(3)));
+    Check(closure.Add(p), "qualified strict COI decrease need not restart at zero");
     std::printf("SUMMARY tests=%u passed\n", tests);
     return 0;
 }

@@ -118,9 +118,11 @@ bin_build\seek-parser.exe
 The synthetic cases cover valid SPS-selected and inline RPS headers, AVS2
 pseudo-code removal, cached sequence state, truncated headers, invalid markers
 and indices, bounded Exp-Golomb values, unsupported background/field sequences,
-and packet bounds. Closure checks require 64 consecutive coded pictures,
-exercise COI wrap, and reject gaps, self/pre-entry references, and geometry
-changes. Success exits zero; any failed check exits nonzero. These are metadata
+and packet bounds. Closure checks require 64 validated coded pictures and
+exercise COI wrap. A fresh sequence with a zero-reference ordinary I may restart
+COI; subsequent references must stay within that new sequence. Unqualified gaps,
+duplicate COIs, missing references and geometry changes are rejected. Success
+exits zero; any failed check exits nonzero. These are metadata
 and reference-closure checks, not pixel decoding or full-recording seek proof.
 ## Live AVS2 seek with audio
 
