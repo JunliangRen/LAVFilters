@@ -219,9 +219,10 @@ player with the same bitness. Prefer a 64-bit player for 8K inputs because the
 The codec settings appear as AVS1 (Chinese AVS), AVS2, and AVS3. This support
 uses software decoding. See [the AVS regression tests](tests/avs-decode/README.md)
 for fixture provenance and the tested decoding, pixel, timestamp, and seek paths.
-For local seekable MPEG-TS files, this preview restores AVS reference pictures
-by decoding from the beginning on seek. Seeking late in a long file can be slow;
-a real AVS keyframe index is a follow-up optimization.
+For local seekable AVS2 MPEG-TS files, seeks inspect a bounded region near the
+requested time and start from a sequence with verified reference-picture closure.
+Unsupported entry patterns retain the compatibility replay path. AVS1 and AVS3
+still decode from the beginning on seek, so late seeks in those files can be slow.
 
 Feedback
 -----------------------------

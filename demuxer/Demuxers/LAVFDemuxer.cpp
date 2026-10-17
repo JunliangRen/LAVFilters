@@ -24,6 +24,7 @@
 #include "ILAVPinInfo.h"
 #include "LAVFVideoHelper.h"
 #include "ExtradataParser.h"
+#include "AVS2SeekParser.h"
 #include "IMediaSideDataFFmpeg.h"
 
 #include "LAVSplitterSettingsInternal.h"
@@ -185,6 +186,13 @@ STDMETHODIMP CLAVFDemuxer::AbortOpening(int mode, int timeout)
 int CLAVFDemuxer::avio_interrupt_cb(void *opaque)
 {
     CLAVFDemuxer *demux = (CLAVFDemuxer *)opaque;
+
+    // Metadata-only AVS2 seek probes must not become an unbounded file scan.
+    if (demux->m_avs2SeekDeadline && GetTickCount64() >= demux->m_avs2SeekDeadline)
+        return 1;
+    if (demux->m_avs2SeekReadLimit && demux->m_avFormat && demux->m_avFormat->pb &&
+        demux->m_avFormat->pb->bytes_read >= demux->m_avs2SeekReadLimit)
+        return 1;
 
     // Check for file opening timeout
     time_t now = time(nullptr);
@@ -2106,7 +2114,17 @@ STDMETHODIMP CLAVFDemuxer::Seek(REFERENCE_TIME rTime)
         (m_avFormat->pb->seekable & AVIO_SEEKABLE_NORMAL) && !(m_avFormat->flags & AVFMT_FLAG_NETWORK))
     {
         AVCodecID codec = m_avFormat->streams[seekStreamId]->codecpar->codec_id;
-        if (codec == AV_CODEC_ID_CAVS || codec == AV_CODEC_ID_AVS2 || codec == AV_CODEC_ID_AVS3)
+        if (codec == AV_CODEC_ID_AVS2)
+        {
+            if (rTime > 0)
+            {
+                const HRESULT hr = SeekAVS2(rTime, seekStreamId);
+                if (hr != S_FALSE)
+                    return hr;
+            }
+            return SeekAVS2Byte(0);
+        }
+        if (codec == AV_CODEC_ID_CAVS || codec == AV_CODEC_ID_AVS3)
         {
             // MPEG-TS timestamp seeking does not locate an AVS random access point. Decode from the
             // beginning to restore sequence headers and reference pictures; the requested segment
@@ -2165,6 +2183,204 @@ retry:
     FlushOnSeek();
 
     return S_OK;
+}
+
+HRESULT CLAVFDemuxer::SeekAVS2Byte(int64_t position)
+{
+    // The generic byte-seek path does not propagate every AVIO seek failure.
+    // Check the real position before discarding any buffered demux/parser data.
+    const int64_t actual = avio_seek(m_avFormat->pb, position, SEEK_SET);
+    if (actual < 0 || actual != position)
+    {
+        av_log(m_avFormat, AV_LOG_WARNING, "LAV AVS2 seek: byte seek failed at %" PRId64 " (%" PRId64 ")\n",
+               position, actual);
+        return E_FAIL;
+    }
+    m_avFormat->pb->error = 0;
+    m_avFormat->pb->eof_reached = 0;
+    m_avFormat->io_repositioned = 1;
+    if (avformat_flush(m_avFormat) < 0)
+        return E_FAIL;
+    FlushOnSeek();
+    return S_OK;
+}
+
+HRESULT CLAVFDemuxer::SeekAVS2(REFERENCE_TIME rTime, int streamId)
+{
+    if (avio_interrupt_cb(this))
+        return E_ABORT;
+
+    constexpr int64_t megabyte = 1024 * 1024;
+    constexpr int64_t totalReadBudget = 128 * megabyte;
+    constexpr unsigned packetLimit = 65536;
+    constexpr ULONGLONG timeoutMs = 2000;
+    const int lookbackSeconds[] = {2, 8, 24};
+    const int64_t readBudgets[] = {32 * megabyte, 64 * megabyte, 128 * megabyte};
+    const ULONGLONG started = GetTickCount64();
+    const int64_t initialBytes = m_avFormat->pb->bytes_read;
+    const int64_t fileSize = avio_size(m_avFormat->pb);
+    if (fileSize <= 0)
+    {
+        av_log(m_avFormat, AV_LOG_VERBOSE, "LAV AVS2 seek: replay-from-zero reason=source size unavailable\n");
+        return S_FALSE;
+    }
+    const AVStream *stream = m_avFormat->streams[streamId];
+    const int64_t target = ConvertRTToTimestamp(rTime, stream->time_base.num, stream->time_base.den);
+    int64_t bestPosition = -1, bestTimestamp = AV_NOPTS_VALUE;
+    unsigned packetsRead = 0;
+    int usedLookback = 0;
+    const char *reason = "no certified local sequence";
+
+    struct Candidate
+    {
+        AVS2SeekClosure closure;
+        int64_t position = -1;
+        int64_t timestamp = AV_NOPTS_VALUE;
+    };
+    std::array<Candidate, 64> candidates;
+    AVPacket packet{};
+
+    m_avs2SeekDeadline = started + timeoutMs;
+    for (unsigned attempt = 0; attempt < _countof(lookbackSeconds); ++attempt)
+    {
+        if (GetTickCount64() >= m_avs2SeekDeadline ||
+            m_avFormat->pb->bytes_read - initialBytes >= totalReadBudget || packetsRead >= packetLimit)
+        {
+            reason = "probe budget exhausted";
+            break;
+        }
+
+        usedLookback = lookbackSeconds[attempt];
+        const REFERENCE_TIME probeStart =
+            (std::max)(REFERENCE_TIME(0), rTime - REFERENCE_TIME(usedLookback) * DSHOW_TIME_BASE);
+        const int64_t probeTimestamp =
+            ConvertRTToTimestamp(probeStart, stream->time_base.num, stream->time_base.den);
+        m_avs2SeekReadLimit = min(initialBytes + totalReadBudget,
+                                  m_avFormat->pb->bytes_read + readBudgets[attempt]);
+        m_avFormat->pb->error = 0;
+        m_avFormat->pb->eof_reached = 0;
+        if (av_seek_frame(m_avFormat, streamId, probeTimestamp, AVSEEK_FLAG_BACKWARD) < 0)
+        {
+            reason = "timestamp probe seek failed";
+            break;
+        }
+        const int64_t probePosition = avio_tell(m_avFormat->pb);
+
+        AVS2SeekParser parser;
+        size_t candidateCount = 0;
+        int64_t sequencePosition = -1;
+        unsigned afterTarget = 0;
+        bool windowComplete = false;
+        while (!avio_interrupt_cb(this) && packetsRead < packetLimit)
+        {
+            av_packet_unref(&packet);
+            const int ret = av_read_frame(m_avFormat, &packet);
+            ++packetsRead;
+            if (ret < 0)
+            {
+                reason = ret == AVERROR_EOF ? "end of file" : "probe packet read failed";
+                windowComplete = ret == AVERROR_EOF;
+                break;
+            }
+            if (packet.stream_index != streamId)
+                continue;
+
+            AVS2SeekParser::Picture picture;
+            if (!parser.ParsePacket(packet.data, packet.size, picture))
+            {
+                candidateCount = 0;
+                sequencePosition = -1;
+                continue;
+            }
+            if (picture.hasSequence)
+                sequencePosition = packet.pos >= probePosition && packet.pos < fileSize ? packet.pos : -1;
+            if (!picture.hasPicture)
+                continue;
+
+            const int64_t timestamp = packet.pts != AV_NOPTS_VALUE ? packet.pts : packet.dts;
+            for (size_t i = 0; i < candidateCount;)
+            {
+                Candidate &candidate = candidates[i];
+                if (!candidate.closure.Add(picture))
+                {
+                    candidates[i] = candidates[--candidateCount];
+                    continue;
+                }
+                ++i;
+            }
+            if (picture.restartCandidate && sequencePosition >= 0 && timestamp != AV_NOPTS_VALUE &&
+                timestamp <= target)
+            {
+                Candidate candidate;
+                if (candidate.closure.Begin(picture))
+                {
+                    candidate.position = sequencePosition;
+                    candidate.timestamp = timestamp;
+                    if (candidateCount < candidates.size())
+                        candidates[candidateCount++] = candidate;
+                    else
+                    {
+                        size_t oldest = 0;
+                        for (size_t i = 1; i < candidateCount; ++i)
+                            if (candidates[i].timestamp < candidates[oldest].timestamp)
+                                oldest = i;
+                        candidates[oldest] = candidate;
+                    }
+                }
+            }
+            // Only the first picture after this B0 may share its byte entry.
+            sequencePosition = -1;
+            // After 64 later pictures every candidate at/before the target has
+            // either proved its reference closure or been rejected.
+            if (timestamp != AV_NOPTS_VALUE && timestamp > target && ++afterTarget >= 64)
+            {
+                windowComplete = true;
+                break;
+            }
+        }
+        av_packet_unref(&packet);
+        // Continue checking even certified candidates through the target and
+        // lookahead. Later malformed headers or a COI discontinuity invalidate
+        // their proof; an interrupted partial window cannot select an entry.
+        if (windowComplete)
+        {
+            for (size_t i = 0; i < candidateCount; ++i)
+            {
+                const Candidate &candidate = candidates[i];
+                if (candidate.closure.Certified() &&
+                    (bestTimestamp == AV_NOPTS_VALUE || candidate.timestamp > bestTimestamp))
+                {
+                    bestPosition = candidate.position;
+                    bestTimestamp = candidate.timestamp;
+                }
+            }
+        }
+        m_avs2SeekReadLimit = 0;
+        if (bestPosition >= 0 || probeStart == 0 || avio_interrupt_cb(this))
+            break;
+    }
+    av_packet_unref(&packet);
+    m_avs2SeekDeadline = 0;
+    m_avs2SeekReadLimit = 0;
+
+    if (avio_interrupt_cb(this))
+        return E_ABORT;
+    const ULONGLONG elapsed = GetTickCount64() - started;
+    const int64_t bytesRead = m_avFormat->pb->bytes_read - initialBytes;
+    if (bestPosition >= 0)
+    {
+        av_log(m_avFormat, AV_LOG_VERBOSE,
+               "LAV AVS2 seek: local target_rt=%" PRId64 " byte=%" PRId64 " raw_pts=%" PRId64
+               " closure=64 lookback_s=%d packets=%u read_bytes=%" PRId64 " probe_ms=%" PRIu64 "\n",
+               rTime, bestPosition, bestTimestamp, usedLookback, packetsRead, bytesRead, elapsed);
+        return SeekAVS2Byte(bestPosition);
+    }
+    if (elapsed >= timeoutMs || bytesRead >= totalReadBudget || packetsRead >= packetLimit)
+        reason = "probe budget exhausted";
+    av_log(m_avFormat, AV_LOG_VERBOSE,
+           "LAV AVS2 seek: replay-from-zero target_rt=%" PRId64 " reason=%s packets=%u read_bytes=%" PRId64
+           " probe_ms=%" PRIu64 "\n", rTime, reason, packetsRead, bytesRead, elapsed);
+    return S_FALSE;
 }
 
 STDMETHODIMP CLAVFDemuxer::SeekByte(int64_t pos, int flags)

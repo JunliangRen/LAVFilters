@@ -31,6 +31,10 @@ if not defined AVS_OUTPUT set "AVS_OUTPUT=bin_build\avs-first\dualarch-validatio
 if not exist "%AVS_OUTPUT%" mkdir "%AVS_OUTPUT%"
 cl.exe /nologo /EHsc /std:c++17 /MT /O2 /utf-8 /DUNICODE /D_UNICODE /D_WIN32_WINNT=0x0602 /Icommon\baseclasses /Iinclude tests\avs-decode\graph-regression.cpp /Fe"%AVS_OUTPUT%\graph-regression-%AVS_ARCH%.exe" /Fo"%AVS_OUTPUT%\graph-regression-%AVS_ARCH%.obj" /link %AVS_LINK% /LIBPATH:"%AVS_LIB%" strmbase.lib ole32.lib oleaut32.lib strmiids.lib winmm.lib uuid.lib advapi32.lib user32.lib bcrypt.lib
 if errorlevel 1 exit /b %errorlevel%
+cl.exe /nologo /EHsc /std:c++17 /MT /O2 /utf-8 /DUNICODE /D_UNICODE /D_WIN32_WINNT=0x0602 /Icommon\baseclasses /Iinclude tests\avs-decode\seek-av-probe.cpp /Fe"%AVS_OUTPUT%\seek-av-probe-%AVS_ARCH%.exe" /Fo"%AVS_OUTPUT%\seek-av-probe-%AVS_ARCH%.obj" /link %AVS_LINK% /LIBPATH:"%AVS_LIB%" strmbase.lib ole32.lib oleaut32.lib strmiids.lib winmm.lib uuid.lib advapi32.lib user32.lib bcrypt.lib
+if errorlevel 1 exit /b %errorlevel%
+cl.exe /nologo /EHsc /W4 /std:c++14 /MT /O2 /utf-8 tests\avs-decode\seek-parser.cpp /Fe"%AVS_OUTPUT%\seek-parser-%AVS_ARCH%.exe" /Fo"%AVS_OUTPUT%\seek-parser-%AVS_ARCH%.obj" /link %AVS_LINK%
+if errorlevel 1 exit /b %errorlevel%
 cl.exe /nologo /EHsc /std:c++17 /MT /O2 /utf-8 /D_WIN32_WINNT=0x0602 /Iffmpeg tests\avs-decode\frame-pts-probe.cpp /Fe"%AVS_OUTPUT%\frame-pts-probe-%AVS_ARCH%.exe" /Fo"%AVS_OUTPUT%\frame-pts-probe-%AVS_ARCH%.obj" /link %AVS_LINK%
 if errorlevel 1 exit /b %errorlevel%
 cl.exe /nologo /EHsc /std:c++17 /MT /O2 /utf-8 /D_WIN32_WINNT=0x0602 tests\avs-decode\smoke-load.cpp /Fe"%AVS_OUTPUT%\smoke-load-%AVS_ARCH%.exe" /Fo"%AVS_OUTPUT%\smoke-load-%AVS_ARCH%.obj" /link %AVS_LINK% ole32.lib strmiids.lib uuid.lib
