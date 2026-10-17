@@ -1,0 +1,155 @@
+diff --git a/build/linux/configure b/build/linux/configure
+index ac90f74..8bec49a 100755
+--- a/build/linux/configure
++++ b/build/linux/configure
+@@ -466,8 +466,8 @@ for opt do
+             if [ "$bit_depth" -lt "8" -o "$bit_depth" -gt "10" ]; then
+                 echo "Supplied bit depth must be in range [8,10]."
+                 exit 1
+-            elif [[ "$bit_depth" = "9" || "$bit_depth" = "10" ]]; then
+-                echo "BitDepth $bit_depth not supported currently."
++            elif [ "$bit_depth" = "9" ]; then
++                echo "BitDepth 9 not supported currently."
+                 exit 1
+             fi
+             bit_depth=`expr $bit_depth + 0`
+diff --git a/source/common/alf.cc b/source/common/alf.cc
+index 30e30f0..334ae7d 100644
+--- a/source/common/alf.cc
++++ b/source/common/alf.cc
+@@ -518,9 +518,6 @@ void davs2_alf_init(uint32_t cpuid, ao_funcs_t *fh)
+         if (cpuid & DAVS2_CPU_SSE4) {
+             fh->alf_block[0] = alf_filter_block_sse128_10bit;
+         }
+-        if (cpuid & (DAVS2_CPU_AVX2)) {
+-            fh->alf_block[0] = alf_filter_block_avx2_10bit;
+-        }
+ #else
+     if (cpuid & DAVS2_CPU_SSE4) {
+         fh->alf_block[0] = alf_filter_block_sse128;
+diff --git a/source/common/common.cc b/source/common/common.cc
+index 5720ce7..60d2875 100644
+--- a/source/common/common.cc
++++ b/source/common/common.cc
+@@ -51,9 +51,9 @@
+  * ===========================================================================
+  */
+ #if HIGH_BIT_DEPTH
+-int max_pel_value = 255;
+-int g_bit_depth   = 8;
+-int g_dc_value    = 128;
++const int max_pel_value = (1 << BIT_DEPTH) - 1;
++const int g_bit_depth   = BIT_DEPTH;
++const int g_dc_value    = 1 << (BIT_DEPTH - 1);
+ #endif
+
+
+diff --git a/source/common/common.h b/source/common/common.h
+index 75a7ab3..66123c5 100644
+--- a/source/common/common.h
++++ b/source/common/common.h
+@@ -1194,9 +1194,9 @@ struct davs2_t {
+  * ===========================================================================
+  */
+ #if HIGH_BIT_DEPTH
+-extern int max_pel_value;
+-extern int g_bit_depth;
+-extern int g_dc_value;
++extern const int max_pel_value;
++extern const int g_bit_depth;
++extern const int g_dc_value;
+ #else
+ static const int g_bit_depth   = BIT_DEPTH;
+ static const int max_pel_value = (1 << BIT_DEPTH) - 1;
+diff --git a/source/common/header.cc b/source/common/header.cc
+index b5dbdb5..8b09910 100644
+--- a/source/common/header.cc
++++ b/source/common/header.cc
+@@ -53,6 +53,14 @@
+ extern const int8_t *tab_DL_Avails[MAX_CU_SIZE_IN_BIT + 1];
+ extern const int8_t *tab_TR_Avails[MAX_CU_SIZE_IN_BIT + 1];
+
++/* ---------------------------------------------------------------------------
++ */
++#define DAVS2_MAX_FRAME_RATE_CODE 13
++static const float FRAME_RATE[DAVS2_MAX_FRAME_RATE_CODE] = {
++    24000.0f / 1001.0f, 24.0f, 25.0f, 30000.0f / 1001.0f, 30.0f, 50.0f, 60000.0f / 1001.0f, 60.0f,
++    100.0f, 120.0f, 200.0f, 240.0f, 300.0f
++};
++
+ static const uint8_t ALPHA_TABLE[64] = {
+      0,  0,  0,  0,  0,  0,  1,  1,
+      1,  1,  1,  2,  2,  2,  3,  3,
+@@ -118,9 +126,6 @@ void davs2_reconfigure_decoder(davs2_mgr_t *h)
+ static
+ int parse_sequence_header(davs2_mgr_t *mgr, davs2_seq_t *seq, davs2_bs_t *bs)
+ {
+-    static const float FRAME_RATE[8] = {
+-        24000.0f / 1001.0f, 24.0f, 25.0f, 30000.0f / 1001.0f, 30.0f, 50.0f, 60000.0f / 1001.0f, 60.0f
+-    };
+     rps_t *p_rps      = NULL;
+
+     int i, j;
+@@ -265,6 +270,12 @@ int parse_sequence_header(davs2_mgr_t *mgr, davs2_seq_t *seq, davs2_bs_t *bs)
+
+     bs_align(bs); /* align position */
+
++    if (seq->head.frame_rate_id < 1 || seq->head.frame_rate_id > DAVS2_MAX_FRAME_RATE_CODE) {
++        davs2_log(mgr, DAVS2_LOG_ERROR, "Invalid frame_rate_code %d, valid range [1, %d].\n",
++            seq->head.frame_rate_id, DAVS2_MAX_FRAME_RATE_CODE);
++        seq->head.frame_rate_id = DAVS2_CLIP3(1, DAVS2_MAX_FRAME_RATE_CODE, seq->head.frame_rate_id);
++    }
++
+     seq->head.bitrate    = ((seq->bit_rate_upper << 18) + seq->bit_rate_lower) * 400;
+     seq->head.frame_rate = FRAME_RATE[seq->head.frame_rate_id - 1];
+
+@@ -864,6 +875,11 @@ void destroy_dpb(davs2_mgr_t *mgr)
+     davs2_frame_t *frame = NULL;
+     int i;
+
++    if (mgr->dpb == NULL) {
++        mgr->dpbsize = 0;
++        return;
++    }
++
+     for (i = 0; i < mgr->dpbsize; i++) {
+         frame = mgr->dpb[i];
+         assert(frame);
+@@ -883,6 +899,7 @@ void destroy_dpb(davs2_mgr_t *mgr)
+
+     davs2_free(mgr->dpb);
+     mgr->dpb = NULL;
++    mgr->dpbsize = 0;
+ }
+
+ /* ---------------------------------------------------------------------------
+@@ -1045,16 +1062,10 @@ int task_decoder_update(davs2_t *h)
+         h->sample_bit_depth = 6 + (seq->encoding_precision << 1);
+     }
+
+-#if HIGH_BIT_DEPTH
+-    g_bit_depth   = h->sample_bit_depth;
+-    max_pel_value = (1 << g_bit_depth) - 1;
+-    g_dc_value    = 1 << (g_bit_depth - 1);
+-#else
+     if (g_bit_depth != h->sample_bit_depth) {
+         davs2_log(h, DAVS2_LOG_ERROR, "Un-supported bit-depth %d in this version.\n", h->sample_bit_depth);
+         return -1;
+     }
+-#endif
+
+     memcpy(h->wq.seq_wq_matrix, seq->seq_wq_matrix, 2 * 64 * sizeof(int16_t)); /* weighting quantization matrix */
+     memcpy(&h->seq_info, seq, sizeof(davs2_seq_t));
+diff --git a/source/common/vec/intrinsic_intra-pred.cc b/source/common/vec/intrinsic_intra-pred.cc
+index 5a46584..0864d8f 100644
+--- a/source/common/vec/intrinsic_intra-pred.cc
++++ b/source/common/vec/intrinsic_intra-pred.cc
+@@ -8549,7 +8549,7 @@ void intra_pred_bilinear_sse128_10bit(pel_t* pSrc, pel_t* dst, int i_dst, int di
+     int x, y;
+     int ishift_x = tab_log2[iWidth];
+     int ishift_y = tab_log2[iHeight];
+-    int ishift = min(ishift_x, ishift_y);
++    int ishift = DAVS2_MIN(ishift_x, ishift_y);
+     int ishift_xy = ishift_x + ishift_y + 1;
+     int offset = 1 << (ishift_x + ishift_y);
+     int a, b, c, w, val;

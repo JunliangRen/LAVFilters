@@ -3,8 +3,8 @@ libdir=${prefix}/lib
 includedir=${prefix}/include
 
 Name: davs2
-Description: AVS2 8-bit decoder library
+Description: AVS2 isolated 8-bit and 10-bit decoder libraries
 Version: 1.6.206
-Libs: -L${libdir} -ldavs2
+Libs: -L${libdir} -ldavs2 -ldavs2_10
 Libs.private: -Wl,-Bstatic -lstdc++ -lwinpthread -Wl,-Bdynamic -static-libgcc -lm
 Cflags: -I${includedir}

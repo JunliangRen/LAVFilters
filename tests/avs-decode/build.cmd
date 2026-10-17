@@ -34,4 +34,6 @@ if errorlevel 1 exit /b %errorlevel%
 cl.exe /nologo /EHsc /std:c++17 /MT /O2 /utf-8 /D_WIN32_WINNT=0x0602 /Iffmpeg tests\avs-decode\frame-pts-probe.cpp /Fe"%AVS_OUTPUT%\frame-pts-probe-%AVS_ARCH%.exe" /Fo"%AVS_OUTPUT%\frame-pts-probe-%AVS_ARCH%.obj" /link %AVS_LINK%
 if errorlevel 1 exit /b %errorlevel%
 cl.exe /nologo /EHsc /std:c++17 /MT /O2 /utf-8 /D_WIN32_WINNT=0x0602 tests\avs-decode\smoke-load.cpp /Fe"%AVS_OUTPUT%\smoke-load-%AVS_ARCH%.exe" /Fo"%AVS_OUTPUT%\smoke-load-%AVS_ARCH%.obj" /link %AVS_LINK% ole32.lib strmiids.lib uuid.lib
+if errorlevel 1 exit /b %errorlevel%
+cl.exe /nologo /EHsc /std:c++17 /MT /O2 /utf-8 /D_WIN32_WINNT=0x0602 /Iffmpeg tests\avs-decode\codec-instances.cpp /Fe"%AVS_OUTPUT%\codec-instances-%AVS_ARCH%.exe" /Fo"%AVS_OUTPUT%\codec-instances-%AVS_ARCH%.obj" /link %AVS_LINK% bcrypt.lib
 exit /b %errorlevel%
