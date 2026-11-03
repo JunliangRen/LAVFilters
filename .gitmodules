@@ -1,7 +1,7 @@
 [submodule "ffmpeg"]
 	path = ffmpeg
 	url = https://github.com/JunliangRen/FFmpeg.git
-	branch = avs2-10bit
+	branch = codex/rebase-upstream-20261104
 [submodule "libbluray"]
 	path = libbluray
 	url = https://gitea.1f0.de/LAV/libbluray.git
