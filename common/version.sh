@@ -39,8 +39,14 @@ if ! git rev-parse --git-dir > /dev/null 2>&1; then
   ver_additional=
   echo "Warning: Git not available or not a git repo. Using dummy values for hash and version number."
 else
-  # Get information about the current version
-  describe=$(git describe --long `git log --grep="\[MPC-HC\] Use our own ffmpeg clone repository\." --pretty=%H`~1)
+  # Rebases followed by merges can leave multiple markers in the history.
+  # Select the newest one across all parents, then describe its upstream base.
+  upstream_marker=$(git log -1 --format=%H --grep="^\[MPC-HC\] Use our own ffmpeg clone repository\.$") || exit 1
+  if [[ -z "$upstream_marker" ]]; then
+    echo "Error: Could not find the upstream version marker." >&2
+    exit 1
+  fi
+  describe=$(git describe --long "${upstream_marker}^1") || exit 1
   echo "Describe:  $describe"
 
   # Get the abbreviated hash of the current changeset
@@ -61,7 +67,7 @@ fi
 version_info="#define LAV_VERSION_BUILD $ver"
 
 # Update version_rev.h if it does not exist, or if version information was changed.
-if [[ ! -f "$versionfile" ]] || [[ "$version_info" != "$(<"$versionfile")" ]]; then
+if [[ ! -f "$versionfile" ]] || [[ "$version_info" != "$(tr -d '\r' < "$versionfile")" ]]; then
   # Write the version information to version_rev.h
-  echo "$version_info" > "$versionfile"
+  printf '%s\r\n' "$version_info" > "$versionfile"
 fi
